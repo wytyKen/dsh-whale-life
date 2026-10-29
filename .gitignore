@@ -5,6 +5,9 @@ build/
 *.tgz
 .pnpm-store/
 
+# ===== 鲸生专属 DSH 隔离环境（数据家，含 profiles/sessions/凭据）=====
+dsh-home/
+
 # ===== 鲸鱼娘的隐私：凭据与会话（绝不提交）=====
 secrets/
 .env

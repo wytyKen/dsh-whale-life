@@ -1,0 +1,9 @@
+{
+  "name": "dsh-whale-life-runtime",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Whale Life 专属的 dsh 运行时副本，与本机任何其他 dsh 环境完全隔离",
+  "dependencies": {
+    "@deepseek-ai/dsh": "0.2.1-rc.5"
+  }
+}
