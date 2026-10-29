@@ -1,0 +1,42 @@
+# ===== 依赖与构建 =====
+node_modules/
+dist/
+build/
+*.tgz
+.pnpm-store/
+
+# ===== 鲸鱼娘的隐私：凭据与会话（绝不提交）=====
+secrets/
+.env
+.env.*
+*.pem
+*.key
+*.token
+cookies*.json
+credentials*.json
+sessions/
+
+# ===== 运行时状态：她的记忆只属于她自己（本地）=====
+data/memory/
+*.session
+*.sqlite
+*.db
+
+# ===== 日志 =====
+logs/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# ===== 测试与覆盖率 =====
+coverage/
+.nyc_output/
+
+# ===== 编辑器与系统 =====
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini
