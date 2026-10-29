@@ -43,3 +43,6 @@ coverage/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# ===== 本地素材池（版权素材，绝不入库）=====
+assets/
