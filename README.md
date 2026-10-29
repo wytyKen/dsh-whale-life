@@ -18,6 +18,8 @@
 
 ## 配置一览
 
+> 以下为概览。完整字段、默认值与注释版示例见 [docs/configuration.md](./docs/configuration.md) 与 [examples/whale.patch.example.yml](./examples/whale.patch.example.yml)。
+
 ### 本体 —— 她是谁
 
 - 🧬 **人设**：空白出生。从模板人设中选择，或完全自定义她的性格与背景
@@ -67,7 +69,7 @@
 dsh plugin --profile <profile-name> add github:wytyKen/dsh-whale-life
 ```
 
-> 当前版本 v0.0.1 为行走骨架：可正常装载，加载后输出生命体征日志，配置与行为系统尚在开发中。
+> 当前版本 v0.0.2：配置系统（四组十四项）与模板人设已就绪并通过装载验证；账号操作与行为系统（定时任务 / 被动响应 / 消耗控制）尚在开发中。
 
 ## 当前状态
 

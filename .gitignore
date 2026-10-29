@@ -17,7 +17,7 @@ credentials*.json
 sessions/
 
 # ===== 运行时状态：她的记忆只属于她自己（本地）=====
-data/memory/
+data/
 *.session
 *.sqlite
 *.db

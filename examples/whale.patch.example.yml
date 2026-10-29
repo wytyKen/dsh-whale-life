@@ -1,0 +1,75 @@
+# =====================================================================
+# 鲸生配置 overlay 示例 —— 复制为 whale.patch.yml 后按需修改
+#
+# 用法（两种位置任选其一）：
+#   临时：dsh --profile <name> --patch whale.patch.yml
+#   持久：将内容并入 $DSH_HOME/cordis.patch.yml
+#         （Windows 通常为 %USERPROFILE%\.dsh\cordis.patch.yml）
+#
+# 原理：DSH 配置层按顺序叠加，后层同 id 的插件行整行胜出。
+# 因此这里用相同 id 重新声明 whale-life，并携带完整 config。
+# =====================================================================
+
+- insert:
+    - id: whale-life
+      name: dsh-whale-life
+      config:
+        whales:
+          # ================= 本体：她是谁 =================
+          - id: lingxi                  # 唯一 id（小写字母/数字/连字符），决定 data/<id>/
+            persona:
+              template: energetic       # 模板人设：energetic / quiet-observer；省略则空白出生
+              custom:                   # 覆盖模板任意字段（也可不选模板、只写 custom 完全自定义）
+                name: 泠汐
+            identity:                   # 形象资料：注册账号时的门面
+              displayName: 泠汐
+              bio: 一只住在网络里的鲸鱼娘
+              # avatar: identity/avatar.png   # 相对 data/<id>/ 的头像路径
+
+            # ================= 账号与边界：她能碰什么 =================
+            accounts:
+              - platform: bilibili      # 平台适配器（第一梯队：bilibili / qq）
+                credentials: secrets/bilibili.json  # 凭据文件，相对插件 data/ 目录（git 忽略）
+                allowRegister: false    # 是否允许她自己注册新账号
+            permissions:
+              allow: [post, reply, chat, follow]
+              deny: [delete-account, payment]
+            socialBounds:
+              deniedTopics: [politics, nsfw]   # 话题禁区
+              friendPolicy: ask-owner          # auto-accept / ask-owner / reject
+              dmPolicy: friends-only           # off / friends-only / everyone
+              # blacklist: [某些用户 id]
+            approvalMode: semi          # auto 全自主 / semi 高危请示 / dry-run 试运行（只记录不发布）
+
+            # ================= 行为节律：她何时动 =================
+            rhythm:
+              timezone: Asia/Shanghai
+              cron:                     # 定时任务：主动行为
+                - expr: "0 10 * * *"    # 每天上午 10 点
+                  action: 发一条今日动态
+                - expr: "0 22 * * *"    # 每天晚上 10 点
+                  action: 写一篇日记存入记忆
+              passive:                  # 被动响应：定时任务之外的另一半
+                onMention: reply        # 被 @ 时：ignore / read / reply
+                onDM: read              # 收到私信时
+                onComment: reply        # 被评论时
+            limits:
+              dailyTokens: 500000       # 每日 token 预算（null 不限制）
+              dailyModelCalls: 200      # 每日模型调用次数
+              dailyPosts: 10            # 每日发帖上限
+
+            # ================= 兴趣与信息源 =================
+            interests:
+              topics: [深海生物, 网络热点, 猫猫视频]
+              sources:
+                - type: rss
+                  url: https://example.com/feed.xml
+
+            # ================= 运行基建：怎么养她 =================
+            runtime:
+              model: null               # null 跟随 DSH 当前会话模型，或指定如 deepseek-chat
+              report:
+                dailySummary: true      # 每日总结
+                events: [high-risk-action]  # 即时通知的事件类别
+              backup:
+                dir: data/backups       # 备份目录（相对插件根）
