@@ -139,6 +139,11 @@ function script({ apiBase }) {
       return Math.floor(diff / 86400000) + ' 天前';
     }
     function badge(cls, text) { return '<span class="wl-badge ' + (cls || '') + '">' + esc(text) + '</span>'; }
+    function setBadge(el, cls, text) {
+      if (!el) return;
+      el.className = 'wl-badge ' + (cls || '');
+      el.textContent = text;
+    }
 
     var APPROVAL = { auto: '全自主', semi: '高危请示', 'dry-run': '试运行' };
     var QQ_STATE = {
@@ -150,39 +155,41 @@ function script({ apiBase }) {
       failed: ['失败', 'wl-badge-bad'],
     };
 
-    // ── 卡片 1：生命体征 ─────────────────────────────
+    // ── 卡片 1：每只鲸鱼一个卡片 ────────────────────
     function renderStatus(j) {
       var box = $('status');
       if (!box) return;
       var alive = $('alive');
       if (!j || !j.ok) {
-        if (alive) alive.outerHTML = badge('wl-badge-bad', '路由服务器未响应');
-        box.innerHTML = '<div class="wl-err">' + esc((j && j.error) || '无法读取 /status（行动路由服务器是否在运行？）') + '</div>';
+        setBadge(alive, 'wl-badge-bad', '路由服务器未响应');
+        box.innerHTML = '<div class="wl-err">' + esc((j && j.error) || '无法读取 /status') + '</div>';
         return;
       }
-      if (alive) alive.outerHTML = badge('wl-badge-ok', '路由在线');
+      setBadge(alive, 'wl-badge-ok', '路由在线');
       var whales = j.whales || [];
-      if (!whales.length) { box.innerHTML = hint('还没有配置任何鲸鱼（docs/configuration.md）'); return; }
-      var rows = [];
+      if (!whales.length) { box.innerHTML = hint('还没有配置任何鲸鱼'); return; }
+      var cards = [];
       whales.forEach(function (w) {
         var st = w.qq && QQ_STATE[w.qq.receiver] ? QQ_STATE[w.qq.receiver] : null;
-        var qqLine = w.qq
-          ? (st ? badge(st[1], st[0]) + (w.qq.why ? ' <span class="wl-hint">' + esc(w.qq.why) + '</span>' : '') : esc(w.qq.receiver))
-          : '<span class="wl-hint">未接入</span>';
-        rows.push(
-          '<div class="wl-item">' +
-            '<div class="wl-item-main">' +
-              '<dl class="wl-kv">' +
-                '<dt>鲸鱼</dt><dd>#' + esc(w.id) + '</dd>' +
-                '<dt>人设</dt><dd>' + esc(w.persona || '—') + '</dd>' +
-                '<dt>审批档</dt><dd>' + esc(APPROVAL[w.approvalMode] || w.approvalMode || '—') + '</dd>' +
-                '<dt>心跳（定时唤醒）</dt><dd>' + (j.ticker ? (j.ticker.running ? '运行中 ✓' : '已停止') : '未知') + '</dd>' +
-                '<dt>QQ 接收端</dt><dd>' + qqLine + '</dd>' +
-              '</dl>' +
-            '</div>' +
+        var qqLine = w.qq ? (st ? badge(st[1], st[0]) : '未知') : '未接入';
+        cards.push(
+          '<div class="wl-card">' +
+            '<div class="wl-card-head"><span class="wl-card-title">🐋 ' + esc(w.persona || w.id) + '</span>' + qqLine + '</div>' +
+            '<dl class="wl-kv">' +
+              '<dt>ID</dt><dd>#' + esc(w.id) + '</dd>' +
+              '<dt>审批档</dt><dd>' + esc(APPROVAL[w.approvalMode] || w.approvalMode) + '</dd>' +
+              '<dt>记忆</dt><dd><label style="cursor:pointer"><input type="checkbox" checked onchange="this.nextElementSibling.textContent=this.checked?\'开启\':\'关闭\'"> <span>开启</span></label> <span class="wl-hint">（所有会话共用）</span></dd>' +
+              '<dt>心跳</dt><dd>' + (j.ticker && j.ticker.running ? '运行中 ✓' : '停止') + '</dd>' +
+            '</dl>' +
           '</div>');
       });
-      box.innerHTML = rows.join('');
+      // 假的添加按钮（后续实现多鲸生管理）
+      cards.push(
+        '<div class="wl-card" style="text-align:center;border-style:dashed;cursor:pointer;opacity:.6" onclick="this.querySelector(\'.wl-hint\').textContent=\'多鲸生管理即将上线，敬请期待 🐋\'">' +
+          '<span style="font-size:20px">＋</span>' +
+          '<div class="wl-hint">添加鲸生</div>' +
+        '</div>');
+      box.innerHTML = cards.join('');
     }
 
     // ── 卡片 2：好友对话 ─────────────────────────────
@@ -198,7 +205,7 @@ function script({ apiBase }) {
         var isGroup = String(p.key || '').indexOf('group:') === 0;
         return '<div class="wl-item">' +
           '<div class="wl-item-main">' +
-            '<div class="wl-item-title">' + esc(p.name || p.key) + badge(isGroup ? '' : '', isGroup ? '群' : '私聊') + '</div>' +
+            '<div class="wl-item-title">' + esc(p.name || p.key) + badge('', isGroup ? '群' : '私聊') + '</div>' +
             '<div class="wl-item-sub">' + esc(p.recentMessage || '（暂无消息预览）') + '</div>' +
           '</div>' +
           '<div class="wl-item-side"><span>' + esc(ago(p.lastAt)) + '</span><span class="wl-hint">' + esc(p.key) + '</span></div>' +

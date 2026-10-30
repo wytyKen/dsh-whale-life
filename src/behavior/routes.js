@@ -67,14 +67,217 @@ export function decideSend({ approvalMode, lastInboundAt, now = Date.now() }) {
   return { execute: false, reason: 'semi：对方近期未来信，只能存草稿（她可以回话，不能主动搭讪）' }
 }
 
-export function startRouteServer({ port = 3939, getQQ, getStatus, log = () => {} } = {}) {
+function isLoopbackOrigin(origin) {
+  try {
+    const { hostname } = new URL(origin)
+    return hostname === '127.0.0.1' || hostname === 'localhost' || hostname === '[::1]' || hostname === '::1'
+  } catch {
+    return false
+  }
+}
+
+// OneBot 消息段 → 一行预览文本（与 session.js 的 extractHistoryText 同语义的精简版）
+function extractPreview(message) {
+  if (typeof message === 'string') return message.replace(/\[CQ:[^\]]*\]/g, '[表情]').trim()
+  if (Array.isArray(message)) {
+    return message.map((s) => {
+      if (s?.type === 'text') return s.data?.text ?? ''
+      if (s?.type === 'image') return '[图片]'
+      if (s?.type === 'at') return `@${s.data?.qq ?? ''} `
+      return ''
+    }).join('').trim()
+  }
+  return ''
+}
+
+// ── Outbox：待审草稿清单（executed=false 且未拒绝，旧→新）─────────────────
+async function listOutboxDrafts(limit = OUTBOX_LIST_LIMIT) {
+  let files = []
+  try {
+    files = (await readdir(OUTBOX_DIR)).filter((f) => f.endsWith('.json')).sort()
+  } catch {
+    return [] // 目录不存在 = 队列为空
+  }
+  const drafts = []
+  for (let i = files.length - 1; i >= 0 && drafts.length < limit; i -= 1) {
+    try {
+      const rec = JSON.parse(await readFile(path.join(OUTBOX_DIR, files[i]), 'utf8'))
+      if (rec && rec.executed === false && !rec.rejected) {
+        drafts.push({
+          file: files[i],
+          at: rec.at ?? null,
+          to: rec.to ?? '',
+          text: rec.text ?? '',
+          reason: rec.reason ?? '',
+        })
+      }
+    } catch { /* 单个坏文件跳过，不拖垮整个清单 */ }
+  }
+  return drafts.reverse()
+}
+
+// ── Outbox：主人裁决。放行 = 真发一次（主人显式决策，不再过 decideSend）；
+//            拒绝 = 标记 rejected 留痕（她会从否决记录里学到「这种不要」）。
+//            返回 { error } 表示业务失败（不抛异常），草稿原样保留。
+async function approveOutboxDraft({ file, approve, getQQ, log }) {
+  if (typeof file !== 'string' || !/^[\w.-]+\.json$/.test(file) || path.basename(file) !== file) {
+    return { error: 'file 必须是 outbox 目录内的文件名' }
+  }
+  const full = path.join(OUTBOX_DIR, file)
+  let record
+  try {
+    record = JSON.parse(await readFile(full, 'utf8'))
+  } catch {
+    return { error: '草稿不存在（可能已被处理）' }
+  }
+  if (record.executed === true) return { error: '这条草稿已经发出过了' }
+  if (record.rejected) return { error: '这条草稿已被拒绝' }
+  if (!record.to || !record.text) return { error: '草稿缺少 to/text，无法执行' }
+
+  if (approve === false) {
+    const next = { ...record, rejected: true, rejectedAt: new Date().toISOString(), rejectedBy: 'owner' }
+    await writeFile(full, JSON.stringify(next, null, 2) + '\n')
+    log(`草稿 ${file} 已被主人拒绝（留痕）`)
+    return { action: 'rejected', file, to: record.to }
+  }
+
+  const qq = getQQ?.()
+  if (!qq) return { error: '没有已就绪的 QQ 平台（先配置账号并启动）' }
+  try {
+    const isGroup = String(record.to).startsWith('group:')
+    const peer = isGroup ? String(record.to).slice(6) : String(record.to)
+    const r = isGroup ? await qq.api.sendGroup(peer, String(record.text)) : await qq.api.sendPrivate(peer, String(record.text))
+    const next = {
+      ...record, executed: true, executedAt: new Date().toISOString(),
+      approvedBy: 'owner', messageId: r?.message_id ?? null,
+    }
+    await writeFile(full, JSON.stringify(next, null, 2) + '\n')
+    log(`草稿 ${file} 已放行 → ${record.to}（messageId=${r?.message_id}）`)
+    return { action: 'sent', file, to: record.to, messageId: r?.message_id ?? null }
+  } catch (e) {
+    return { error: `放行失败（草稿保留待重试）：${e?.message ?? e}` }
+  }
+}
+
+// ── Peers：活跃 QQ 会话。名字来自持久化的 qq-peers.json（data/<whale-id>/），
+//            活跃时间取「持久化 lastAt」与内存 recentPeers 的较大值；
+//            最近消息预览 best-effort 拉 NapCat 历史（拉不到就空，不阻塞）。
+async function listPeers({ getAllQQ }) {
+  const entries = typeof getAllQQ === 'function' ? (getAllQQ() ?? []) : []
+  const byKey = new Map()
+  for (const entry of entries) {
+    const whaleId = entry?.whale?.id
+    if (!whaleId) continue
+    let store = {}
+    // 会话名持久化文件：优先注册表带来的权威路径，兜底经典布局 data/<id>/qq-peers.json
+    const peersFile = entry.peersFile || path.join(PLUGIN_ROOT, 'data', whaleId, 'qq-peers.json')
+    try {
+      store = JSON.parse(await readFile(peersFile, 'utf8'))
+    } catch { /* 没有持久化文件 = 全部用 peerKey 当名字 */ }
+    const memKeys = entry.recentPeers instanceof Map ? [...entry.recentPeers.keys()] : []
+    const keys = new Set([...Object.keys(store ?? {}), ...memKeys])
+    for (const key of keys) {
+      const lastAt = Math.max(Number(store?.[key]?.lastAt ?? 0), Number(entry.recentPeers?.get(key) ?? 0)) || null
+      const prev = byKey.get(key)
+      if (prev && (prev.lastAt ?? 0) >= (lastAt ?? 0)) continue
+      byKey.set(key, {
+        key,
+        name: store?.[key]?.name || (key.startsWith('group:') ? `群 ${key.slice(6)}` : key),
+        kind: key.startsWith('group:') ? 'group' : 'private',
+        lastAt,
+        recentMessage: null,
+        _api: entry.api ?? null,
+      })
+    }
+  }
+  const peers = [...byKey.values()]
+    .sort((a, b) => (b.lastAt ?? 0) - (a.lastAt ?? 0))
+    .slice(0, PEERS_LIMIT)
+
+  const previewTargets = peers.filter((p) => p.kind === 'private' && p._api).slice(0, PEERS_PREVIEW_COUNT)
+  await Promise.all(previewTargets.map(async (p) => {
+    try {
+      const r = await p._api.call('get_friend_msg_history', { user_id: Number(p.key), count: 1, message_seq: 0 })
+      const msgs = r?.messages ?? []
+      const m = msgs[msgs.length - 1]
+      if (m) {
+        const who = m?.sender?.card || m?.sender?.nickname || '对方'
+        p.recentMessage = `${who}：${extractPreview(m.message)}`.slice(0, PEERS_PREVIEW_LEN)
+      }
+    } catch { /* 预览拉不到就空着 */ }
+  }))
+
+  return peers.map(({ _api, ...rest }) => rest)
+}
+
+export function startRouteServer({ port = 3939, getQQ, getAllQQ, getStatus, log = () => {} } = {}) {
   const server = http.createServer(async (req, res) => {
     try {
       const url = new URL(req.url, `http://127.0.0.1:${port}`)
       if (!isLoopback(req)) return json(res, 403, { ok: false, error: '仅限本机访问' })
 
+      // ── 跨源栅栏：设置页片段由 DSH Web 源（回环）加载后跨源 fetch 本服务器。
+      //    Origin 缺失（她的 node fetch / curl）照旧放行；带 Origin 的浏览器请求
+      //    只认回环来源（反射 ACAO），外来站点既拿不到响应也过不了预检（fail-closed）。
+      const origin = req.headers?.origin ? String(req.headers.origin) : ''
+      const originTrusted = !origin || isLoopbackOrigin(origin)
+      if (origin && !originTrusted) return json(res, 403, { ok: false, error: '不受信任的来源' })
+      if (req.method === 'OPTIONS') {
+        if (origin && originTrusted) {
+          res.setHeader('access-control-allow-origin', origin)
+          res.setHeader('vary', 'origin')
+          res.setHeader('access-control-allow-methods', 'GET, POST, OPTIONS')
+          res.setHeader('access-control-allow-headers', 'content-type')
+          res.setHeader('access-control-max-age', '600')
+        }
+        res.statusCode = 204
+        return res.end()
+      }
+      if (origin && originTrusted) {
+        res.setHeader('access-control-allow-origin', origin)
+        res.setHeader('vary', 'origin')
+      }
+
       if (req.method === 'GET' && url.pathname === '/status') {
         return json(res, 200, { ok: true, ...(getStatus?.() ?? {}) })
+      }
+
+      if (req.method === 'GET' && url.pathname === '/personas') {
+        try {
+          return json(res, 200, { ok: true, personas: await listPersonas() })
+        } catch (e) {
+          return json(res, 200, { ok: false, error: `人设模板读取失败：${e?.message ?? e}`, personas: [] })
+        }
+      }
+
+      if (req.method === 'GET' && url.pathname === '/outbox/list') {
+        return json(res, 200, { ok: true, drafts: await listOutboxDrafts() })
+      }
+
+      if (req.method === 'POST' && url.pathname === '/outbox/approve') {
+        const body = await readJsonBody(req)
+        if (typeof body?.approve !== 'boolean') {
+          return json(res, 400, { ok: false, error: '需要 approve 布尔字段（true=放行，false=拒绝）' })
+        }
+        const result = await approveOutboxDraft({
+          file: body?.file,
+          approve: body.approve,
+          getQQ: () => getQQ(body?.whale),
+          log,
+        })
+        if (result.error) return json(res, 400, { ok: false, error: result.error })
+        return json(res, 200, { ok: true, result })
+      }
+
+      if (req.method === 'GET' && url.pathname === '/peers') {
+        return json(res, 200, { ok: true, peers: await listPeers({ getAllQQ }) })
+      }
+
+      if (req.method === 'GET' && url.pathname === '/settings-page') {
+        res.statusCode = 200
+        res.setHeader('content-type', 'text/html; charset=utf-8')
+        res.setHeader('cache-control', 'no-store')
+        return res.end(settingsPage())
       }
 
       if (req.method === 'POST' && url.pathname === '/qq/send') {
@@ -114,7 +317,7 @@ export function startRouteServer({ port = 3939, getQQ, getStatus, log = () => {}
   return new Promise((resolve) => {
     server.listen(port, '127.0.0.1', () => {
       const actual = server.address().port
-      log(`行动路由服务器已启动 http://127.0.0.1:${actual}（status | qq/send）`)
+      log(`行动路由服务器已启动 http://127.0.0.1:${actual}（status | qq/send | personas | outbox | peers | settings-page）`)
       resolve({
         port: actual,
         stop: () => server.close(),

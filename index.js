@@ -11,6 +11,7 @@ import { createSessionBridge } from './src/whale/session.js'
 import { personaBlock, wakePrompt } from './src/whale/wake.js'
 import { createApprover, modeFromConfig } from './src/behavior/approver.js'
 import { startRouteServer } from './src/behavior/routes.js'
+import { registerSettingsSection } from './src/behavior/settings-section.js'
 import { registerQQ } from './src/platforms/qq/index.js'
 import { runCatchUp } from './src/platforms/qq/catchup.js'
 
@@ -54,6 +55,7 @@ export function apply(ctx, config = {}) {
   const qqReceivers = []
   const qqRegistry = new Map() // whaleId → { whale, api, recentPeers }
   let stopRoutes = null
+  let stopSettings = null
   let routePort = null
   const pendingCatchups = []
 
@@ -121,7 +123,7 @@ export function apply(ctx, config = {}) {
         if (qq) {
           last.qq = qq
           qqReceivers.push(qq)
-          qqRegistry.set(whale.id, { whale, api: qq.api, recentPeers })
+          qqRegistry.set(whale.id, { whale, api: qq.api, recentPeers, peersFile: qq.peersFile })
         }
       }
     }
@@ -130,6 +132,8 @@ export function apply(ctx, config = {}) {
     const routes = await startRouteServer({
       port: Number(config.routePort ?? 3939),
       getQQ: (whaleId) => (whaleId ? qqRegistry.get(whaleId) : [...qqRegistry.values()][0] ?? null),
+      // 会话列表用：枚举全部已就绪的 QQ 平台（/peers）
+      getAllQQ: () => [...qqRegistry.values()],
       getStatus: () => ({
         whales: whales.map((w) => ({
           id: w.whale.id,
@@ -137,11 +141,17 @@ export function apply(ctx, config = {}) {
           approvalMode: w.whale.approvalMode,
           qq: w.qq ? w.qq.state() : null,
         })),
+        // 心跳：ticker 在路由启动之后才创建，闭包在请求时读取即得最新状态
+        ticker: { running: ticker?.running ?? false },
       }),
       log,
     })
     stopRoutes = routes.stop
     routePort = routes.port
+
+    // 设置页「鲸生」区块：webServer 挂 HTML 片段；不可用时降级为独立页面链接
+    //（webServer 不列入 inject——它是增强入口，缺席不能拖垮核心行动路由 ✓）
+    stopSettings = registerSettingsSection({ ctx, port: routePort, log })
 
     // 离线补收：路由就绪后，把睡着期间错过的私聊补给她
     for (const cu of pendingCatchups) {
@@ -196,6 +206,7 @@ export function apply(ctx, config = {}) {
   bootstrap().catch((e) => log(`启动失败：${e.message}`))
 
   ctx.effect(() => () => {
+    stopSettings?.()
     stopRoutes?.()
     for (const qq of qqReceivers) qq.stop()
     ticker?.stop()
