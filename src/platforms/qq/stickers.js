@@ -73,11 +73,85 @@ export function parseStickers(rawText) {
   return { text: text.replace(/\s{2,}/g, ' ').trim(), stickers }
 }
 
+// ── QQ 表情包（mface）库 ─────────────────────────────────
+// 从收到的消息自动捕获，或手动在 data/<whale>/mface-library.json 配置
+
+import { readFile, writeFile, mkdir } from 'node:fs/promises'
+
+export function createMfaceLibrary(libraryFile) {
+  async function load() {
+    try { return JSON.parse(await readFile(libraryFile, 'utf8')) } catch { return {} }
+  }
+  async function save(data) {
+    await mkdir(path.dirname(libraryFile), { recursive: true })
+    await writeFile(libraryFile, JSON.stringify(data, null, 2) + '\n')
+  }
+  return {
+    /** 从收到的消息捕获表情包元数据，返回新增数量 */
+    async capture(mfaces, senderName) {
+      if (!mfaces?.length) return 0
+      const lib = await load()
+      let added = 0
+      for (const mf of mfaces) {
+        const key = mf.data?.emoji_id ?? mf.data?.face_id ?? JSON.stringify(mf.data).slice(0, 60)
+        if (!lib[key]) {
+          // 用 summary 做人可读名，去重后缀
+          const rawName = (mf.data?.summary ?? '').replace(/^\[|\]$/g, '') || `表情${Object.keys(lib).length + 1}`
+          lib[key] = {
+            name: rawName,
+            type: mf.type,
+            data: { ...mf.data },
+            capturedFrom: senderName ?? 'unknown',
+            capturedAt: new Date().toISOString(),
+          }
+          added++
+        }
+      }
+      if (added > 0) await save(lib)
+      return added
+    },
+
+    /** 按名查找 */
+    async find(name) {
+      const lib = await load()
+      const entry = Object.values(lib).find((e) => e.name === name || e.name.includes(name))
+      return entry ?? null
+    },
+
+    /** 列出所有已捕获的表情包名 */
+    async listNames() {
+      const lib = await load()
+      return Object.values(lib).map((e) => e.name)
+    },
+  }
+}
+
+// ── 解析模型输出中的 QQ 表情包引用 ─────────────────────
+// 返回 { text: 纯文本, mfaceRefs: [名字] }
+export function parseMfaceRefs(rawText) {
+  const refs = []
+  const pattern = /\[表情[：:]([^\]]+)\]/g
+  let text = rawText
+  let match
+  while ((match = pattern.exec(rawText)) !== null) {
+    refs.push(match[1].trim())
+    text = text.replace(match[0], '')
+  }
+  return { text: text.replace(/\s{2,}/g, ' ').trim(), mfaceRefs: refs }
+}
+
 // ── 生成可用的贴纸清单（注入启动提示词）──────────────────
-export function stickerCatalogPreview() {
-  const names = [...new Set(Object.values(STICKER_MAP))]
-  const unique = [...new Set(Object.keys(STICKER_MAP))]
-  return `你可以在回复中使用 [贴纸:表情名] 来发送表情包。可用的表情有：${unique.slice(0, 30).join('、')} 等共 ${unique.length} 个。`
+export function stickerCatalogPreview(mfaceNames = []) {
+  const spriteNames = [...new Set(Object.keys(STICKER_MAP))]
+  let catalog = `你可以在回复中使用以下方式发送表情：\n`
+  catalog += `1. [贴纸:表情名] — 发送鲸鱼娘立绘（${spriteNames.slice(0, 15).join('、')} 等共 ${spriteNames.length} 个）\n`
+  if (mfaceNames.length > 0) {
+    catalog += `2. [表情:名字] — 发送QQ表情包（${mfaceNames.slice(0, 15).join('、')} 等共 ${mfaceNames.length} 个）\n`
+  } else {
+    catalog += `2. [表情:名字] — 发送QQ表情包（暂无库存；有人发给你表情包时会自动收录）\n`
+  }
+  catalog += `3. Unicode emoji（😄🎉 等）直接输入即可`
+  return catalog
 }
 
 // ── 构建 OneBot 消息段（文字 + 图片混合）─────────────────

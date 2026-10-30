@@ -62,6 +62,7 @@ export async function registerQQ({ whale, home, controller, workspaceId, persona
     conversationManager,
     responder,
     recentPeers,
+    mfaceLibrary: conversationManager.mfaceLibrary,
     peerStore,
     log,
   })

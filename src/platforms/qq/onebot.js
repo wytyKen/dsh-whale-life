@@ -57,16 +57,20 @@ export function normalizeOneBotMessage(payload, fallbackSelfId) {
   if (text === '' && images === 0) return undefined
 
   const segments = Array.isArray(message) ? message : []
+  // 捕获 mface（QQ 表情包）段，供贴纸库存档
+  const mfaces = segments.filter((seg) => seg?.type === 'mface' || seg?.type === 'bface')
+    .map((seg) => ({ type: seg.type, data: { ...seg.data } }))
   return {
     type: messageType,
     userId: payload.user_id,
     groupId: messageType === 'group' ? payload.group_id : undefined,
     messageId: payload.message_id,
     senderName: payload.sender?.card || payload.sender?.nickname || undefined,
-    text: text === '' ? `[图片${images > 1 ? `×${images}` : ''}]` : text,
+    text: text === '' ? (mfaces.length ? `[表情包${mfaces.length > 1 ? `×${mfaces.length}` : ''}]` : `[图片${images > 1 ? `×${images}` : ''}]`) : text,
     atMe: messageType === 'group' && isAtMe(segments, selfId),
     isReply: messageType === 'group' && segments.some((seg) => seg?.type === 'reply'),
     images,
+    mfaces,
   }
 }
 

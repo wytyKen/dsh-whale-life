@@ -8,12 +8,18 @@ const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '
 const MERGE_WINDOW_MS = 8_000  // 连续消息的合流窗口
 const MERGE_MAX = 5            // 超过此数立即出发
 
-export function createQQSession({ whale, api, selfId, conversationManager, responder, recentPeers, peerStore, log = () => {} }) {
+export function createQQSession({ whale, api, selfId, conversationManager, responder, recentPeers, peerStore, mfaceLibrary, log = () => {} }) {
   const passive = whale.rhythm.passive
   const dmPolicy = whale.socialBounds.dmPolicy
   const buffers = new Map() // peerKey → { timer, messages: [] }
 
   async function handle(message) {
+    // ── QQ 表情包捕获 ────────────────────────────────────
+    if (message.mfaces?.length && mfaceLibrary) {
+      const added = await mfaceLibrary.capture(message.mfaces, message.senderName)
+      if (added > 0) log(`捕获 ${added} 个QQ表情包（来自 ${message.senderName ?? message.userId}）`)
+    }
+
     // ── 来信登记 ──────────────────────────────────────────
     const peerKey = message.type === 'private' ? String(message.userId) : `group:${message.groupId}`
     if (recentPeers) {

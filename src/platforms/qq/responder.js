@@ -1,7 +1,7 @@
 // 回复捕获器：监听模型回复完成，提取文本，从 QQ 发回。
 // 模型不需要运行任何命令——它只是"说话"，插件替它"送话"。
 
-import { parseStickers, buildMessageSegments } from './stickers.js'
+import { parseStickers, buildMessageSegments, parseMfaceRefs } from './stickers.js'
 
 const POLL_INTERVAL_MS = 2000
 const POLL_TIMEOUT_MS = 120_000 // 最多等 2 分钟
@@ -57,26 +57,36 @@ export function createResponder({ api, conversationManager, log = () => {} }) {
         const cleaned = responseText.replace(/^(泠汐|我)\s*[：:]\s*/m, '').trim()
         if (!cleaned) return
 
-        // ── 解析贴纸引用 ─────────────────────────────
-        const { text, stickers } = parseStickers(cleaned)
+        // ── 解析贴纸引用 + QQ表情包引用 ─────────────────
+        const { text: afterSprite, stickers } = parseStickers(cleaned)
+        const { text, mfaceRefs } = parseMfaceRefs(afterSprite)
 
         // ── 从 QQ 发回 ──────────────────────────────
-        log(`回复就绪（${peerKey}）：${text.slice(0, 60)}${stickers.length ? ` + ${stickers.length}张贴纸` : ''}…`)
+        log(`回复就绪（${peerKey}）：${text.slice(0, 60)}${stickers.length ? ` +${stickers.length}贴纸` : ''}${mfaceRefs.length ? ` +${mfaceRefs.length}表情包` : ''}…`)
         try {
           const isGroup = String(peerKey).startsWith('group:')
           const peer = isGroup ? String(peerKey).slice(6) : peerKey
-          let r
-          if (stickers.length > 0) {
-            // 混合消息（文字+图片）
-            const segments = buildMessageSegments(text, stickers)
-            r = isGroup
-              ? await api.sendGroupSegments(peer, segments)
-              : await api.sendPrivateSegments(peer, segments)
-          } else {
-            r = isGroup
-              ? await api.sendGroup(peer, text)
-              : await api.sendPrivate(peer, text)
+          const segments = []
+
+          // 文字部分
+          if (text.trim()) segments.push({ type: 'text', data: { text: text.trim() } })
+          // 立绘贴纸（图片段）
+          for (const s of stickers) {
+            segments.push({ type: 'image', data: { file: `file:///${s.file.replace(/\\/g, '/')}` } })
           }
+          // QQ 表情包（mface 段）
+          for (const name of mfaceRefs) {
+            const entry = await conversationManager.findMface(name)
+            if (entry) {
+              segments.push({ type: entry.type, data: entry.data })
+            }
+          }
+
+          if (segments.length === 0) return // 空回复跳过
+
+          const r = segments.length > 1 || segments[0].type !== 'text'
+            ? (isGroup ? await api.sendGroupSegments(peer, segments) : await api.sendPrivateSegments(peer, segments))
+            : (isGroup ? await api.sendGroup(peer, text) : await api.sendPrivate(peer, text))
           log(`已送达 → ${peerKey}（messageId=${r?.message_id}${stickers.length ? `，含${stickers.map(s=>s.name).join('/')}` : ''}）`)
 
           // 记入记忆

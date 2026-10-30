@@ -8,7 +8,7 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises'
 import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { recallContext, recordFact } from '../../memory/store.js'
-import { stickerCatalogPreview } from './stickers.js'
+import { stickerCatalogPreview, createMfaceLibrary } from './stickers.js'
 
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
 const PROJCACHE_DIR = path.join(PLUGIN_ROOT, 'dsh-home', 'storages', 'session_projcache', 'sessions')
@@ -16,6 +16,7 @@ const PROJCACHE_DIR = path.join(PLUGIN_ROOT, 'dsh-home', 'storages', 'session_pr
 export function createConversationManager({ controller, whaleHome, workspaceId, persona, whale, log = () => {} }) {
   const conversations = new Map() // peerKey → { sessionId, primed, turns, busy }
   const convFile = path.join(whaleHome, 'conversations.json')
+  const mfaceLibrary = createMfaceLibrary(path.join(whaleHome, 'mface-library.json'))
 
   // ── 持久化 ──────────────────────────────────────────
   async function load() {
@@ -79,7 +80,7 @@ export function createConversationManager({ controller, whaleHome, workspaceId, 
 
     // 表情包
     lines.push('')
-    lines.push(stickerCatalogPreview())
+    lines.push(stickerCatalogPreview(mfaceLibrary ? [] : [])) // mface 名单在启动时可能为空，捕获后重开会话生效
 
     // 行为约束（群聊 vs 私聊略有不同）
     lines.push('')
@@ -158,6 +159,8 @@ export function createConversationManager({ controller, whaleHome, workspaceId, 
     sendMessage,
     getSessionStats,
     saveMemory,
+    findMface: async (name) => mfaceLibrary.find(name),
+    mfaceLibrary,
     get conversations() { return conversations },
     get convFile() { return convFile },
   }

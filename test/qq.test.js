@@ -314,3 +314,41 @@ test('stickers：解析 [贴纸:xxx] 引用并生成图片段', async () => {
   // 目录预览非空
   assert.ok(stickerCatalogPreview().includes('[贴纸:'))
 })
+
+// ---------- QQ 表情包（mface）捕获与引用 ----------
+
+test('mface：捕获元数据并按名查找', async () => {
+  const { createMfaceLibrary, parseMfaceRefs } = await import('../src/platforms/qq/stickers.js')
+  const dir = mkdtempSync(path.join(tmpdir(), 'wl-mface-'))
+  try {
+    const lib = createMfaceLibrary(path.join(dir, 'mface-library.json'))
+    // 模拟收到的 mface 段
+    const mfaces = [
+      { type: 'mface', data: { summary: '[开心柴犬]', emoji_id: 'abc123', emoji_package_id: 'pkg1', key: 'k1' } },
+      { type: 'mface', data: { summary: '[跳舞猫]', emoji_id: 'def456', emoji_package_id: 'pkg1', key: 'k2' } },
+    ]
+    const added = await lib.capture(mfaces, '瓜')
+    assert.equal(added, 2)
+    // 重复捕获不重复计数
+    const added2 = await lib.capture(mfaces, '瓜')
+    assert.equal(added2, 0)
+    // 按名查找
+    const found = await lib.find('开心柴犬')
+    assert.ok(found)
+    assert.equal(found.data.emoji_id, 'abc123')
+    // 模糊查找
+    const fuzzy = await lib.find('柴犬')
+    assert.ok(fuzzy)
+    // 列名
+    const names = await lib.listNames()
+    assert.equal(names.length, 2)
+    // 解析模型输出
+    const raw = '哈哈 [表情:开心柴犬] 太好笑了'
+    const { text, mfaceRefs } = parseMfaceRefs(raw)
+    assert.equal(text, '哈哈 太好笑了')
+    assert.equal(mfaceRefs.length, 1)
+    assert.equal(mfaceRefs[0], '开心柴犬')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
