@@ -7,11 +7,12 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import crypto from 'node:crypto'
 
-export function createSessionBridge({ controller, whaleHome, cwd, personaBlock, log = () => {} }) {
+export function createSessionBridge({ controller, whaleHome, cwd, personaBlock, model, log = () => {} }) {
   const stateFile = path.join(whaleHome, 'session.json')
   let state = null
   let booted = false
   let ready = false
+  let modelSet = false
   let tail = Promise.resolve()
   let currentAbort = null
 
@@ -53,6 +54,20 @@ export function createSessionBridge({ controller, whaleHome, cwd, personaBlock, 
           log('沿用现有会话；若投递失败将重试')
         }
         ready = true
+      }
+      // 会话模型固定：默认 deepseek-flash + 低思考档（快速直答），runtime.model 可覆盖
+      if (!modelSet && model) {
+        modelSet = true
+        const selection = typeof model === 'string'
+          ? { model, ...(model === 'deepseek-flash' ? { reasoningEffort: 'low' } : {}) }
+          : { ...model }
+        try {
+          const r = await controller.selectModel({ sessionId: st.sessionId, provider: 'deepseek-official', ...selection })
+          log(`会话模型已固定：${r.selected.model}${r.selected.reasoningEffort ? `（思考档：${r.selected.reasoningEffort}）` : '（无思考，直答）'}`)
+        } catch (e) {
+          modelSet = false
+          log(`模型切换失败（沿用 DSH 默认）：${e.message}`)
+        }
       }
       try {
         await controller.prompt({

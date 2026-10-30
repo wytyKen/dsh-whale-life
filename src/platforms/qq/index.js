@@ -27,7 +27,7 @@ export async function loadQQConfig(file = QQ_CONFIG_FILE) {
  * 为一只配置了 qq 平台的鲸鱼装配 QQ 能力。
  * @returns {{ stop(): void, api, state: () => object } | null} 未配置连接时返回 null
  */
-export async function registerQQ({ whale, bridge, log = () => {}, config: override } = {}) {
+export async function registerQQ({ whale, bridge, recentPeers, webPort, log = () => {}, config: override } = {}) {
   const config = override ?? await loadQQConfig()
   if (!config) {
     log(`⚠ #${whale.id} 配置了 QQ，但缺少连接文件 ${QQ_CONFIG_FILE} —— QQ 未接入（见 docs/platforms/qq-technical-proposal.md §4）`)
@@ -35,7 +35,7 @@ export async function registerQQ({ whale, bridge, log = () => {}, config: overri
   }
 
   const api = createQQApi({ config })
-  const session = createQQSession({ whale, bridge, log })
+  const session = createQQSession({ whale, bridge, recentPeers, webPort, log })
 
   let lastState = 'init'
   let lastWhy = null

@@ -13,7 +13,7 @@ export function personaBlock(persona, whale) {
 export function wakePrompt({ persona, whale, action, memory, capabilities = [] }) {
   const boundary = {
     auto: '你被允许自主行动，但保持节制：宁少勿滥，像真人一样有张有弛。',
-    semi: '想发布的对外内容（帖子/评论/私信）先生成草稿放进 outbox/ 目录等主人放行，其余自由。',
+    semi: '回话规则：对方在 30 分钟内主动来找过你 → 你可以直接回复（经插件路由发送，频率限制自动生效）；主动给没来过的人发消息 → 只能存草稿等主人放行。',
     'dry-run': '今天处于试运行：一切想做的对外动作都只写成草稿存档，绝不真正发布。',
   }[whale.approvalMode] ?? '对外内容先请示主人。'
 

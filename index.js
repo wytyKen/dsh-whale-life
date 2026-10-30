@@ -10,19 +10,20 @@ import { recallContext, appendDiary } from './src/memory/store.js'
 import { createSessionBridge } from './src/whale/session.js'
 import { personaBlock, wakePrompt } from './src/whale/wake.js'
 import { createApprover, modeFromConfig } from './src/behavior/approver.js'
+import { startRouteServer } from './src/behavior/routes.js'
 import { registerQQ } from './src/platforms/qq/index.js'
 
 export const name = 'dsh-whale-life'
-// cordis 4.x：访问 ctx.sessionController 必须在此声明（注入即必需依赖）。
-// 该服务由 Web 组合（DSH Desktop / dsh web）挂载；无会话服务的裸 profile 中
-// 插件保持 pending——没有会话就没有唤醒，语义上正确。
+// cordis 4.x：访问服务必须在此声明（注入即必需依赖）。
+// sessionController：唤醒她的会话（Web 组合挂载）。
+// 行动路由已改为插件自有的独立 HTTP 服务器（127.0.0.1:3939），不再依赖 webServer。
 export const inject = ['sessionController']
 
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)))
 const LOG_FILE = path.join(PLUGIN_ROOT, 'data', 'whale-life.log')
 
 // 依配置生成她「能做什么」的能力清单（写给她的唤醒提示词）
-function capabilitiesFor(whale) {
+function capabilitiesFor(whale, webPort) {
   const caps = []
   const has = (platform) => whale.accounts.some((a) => a.platform === platform)
   if (has('bilibili')) {
@@ -31,9 +32,9 @@ function capabilitiesFor(whale) {
       `B站登录由主人完成：node "${path.join(PLUGIN_ROOT, 'cli.mjs')}" bili login（扫码，凭据存本地）`,
     )
   }
-  if (has('qq')) {
+  if (has('qq') && webPort) {
     caps.push(
-      `QQ（被动收听 + 手动回复）：收到私聊或被 @ 时你会被唤醒；回复用 node "${path.join(PLUGIN_ROOT, 'cli.mjs')}" qq send --to <QQ号|group:群号> <内容> --yes`,
+      `QQ（被动收听 + 自主回复）：收到私聊或被 @ 时你会被唤醒。回复不需要开终端——用你的 fetch/网页工具 POST http://127.0.0.1:${webPort}/qq/send ，JSON body {"to":"<对方QQ号或group:群号>","text":"<回复内容>"}。审批与频率限制由插件强制：semi 档下你只能回话（对方 30 分钟内来过才能发），不能主动搭讪。`,
     )
   }
   return caps
@@ -50,6 +51,9 @@ export function apply(ctx, config = {}) {
   const result = loadConfig(config)
   let ticker = null
   const qqReceivers = []
+  const qqRegistry = new Map() // whaleId → { whale, api, recentPeers }
+  let stopRoutes = null
+  let routePort = null
 
   // cordis 4.x 没有 'ready' 事件：启动逻辑在 apply 内直接跑，清理走 ctx.effect
   const bootstrap = async () => {
@@ -85,6 +89,7 @@ export function apply(ctx, config = {}) {
           whaleHome: home,
           cwd: home,
           personaBlock: () => personaBlock(persona.value, whale),
+          model: whale.runtime.model ?? 'deepseek-flash',
           log,
         }),
       })
@@ -92,10 +97,32 @@ export function apply(ctx, config = {}) {
       // QQ 平台：装配接收端（NapCat 反向 WS）→ 被动唤醒
       if (whale.accounts.some((a) => a.platform === 'qq')) {
         const last = whales[whales.length - 1]
-        const qq = await registerQQ({ whale, bridge: last.bridge, log })
-        if (qq) { last.qq = qq; qqReceivers.push(qq) }
+        const recentPeers = new Map() // peerKey → 最近来信时间（semi 档回话窗口判定用）
+        const qq = await registerQQ({ whale, bridge: last.bridge, recentPeers, webPort: () => routePort, log })
+        if (qq) {
+          last.qq = qq
+          qqReceivers.push(qq)
+          qqRegistry.set(whale.id, { whale, api: qq.api, recentPeers })
+        }
       }
     }
+
+    // 行动路由：插件自有的独立 HTTP 服务器（审批/节流/留痕在插件进程内强制）
+    const routes = await startRouteServer({
+      port: Number(config.routePort ?? 3939),
+      getQQ: (whaleId) => (whaleId ? qqRegistry.get(whaleId) : [...qqRegistry.values()][0] ?? null),
+      getStatus: () => ({
+        whales: whales.map((w) => ({
+          id: w.whale.id,
+          persona: w.persona.name,
+          approvalMode: w.whale.approvalMode,
+          qq: w.qq ? w.qq.state() : null,
+        })),
+      }),
+      log,
+    })
+    stopRoutes = routes.stop
+    routePort = routes.port
     if (!controller) {
       log('⚠ sessionController 缺失：心跳照常，但无法唤醒会话')
     }
@@ -117,7 +144,7 @@ export function apply(ctx, config = {}) {
               const memory = await recallContext(w.home)
               await w.bridge.wake(wakePrompt({
                 persona: w.persona, whale: w.whale, action: entry.action, memory,
-                capabilities: capabilitiesFor(w.whale),
+                capabilities: capabilitiesFor(w.whale, routePort),
               }))
               await appendDiary(w.home, {
                 text: `醒来执行：${entry.action}`,
@@ -140,6 +167,7 @@ export function apply(ctx, config = {}) {
   bootstrap().catch((e) => log(`启动失败：${e.message}`))
 
   ctx.effect(() => () => {
+    stopRoutes?.()
     for (const qq of qqReceivers) qq.stop()
     ticker?.stop()
     log('DSH 关闭，鲸生沉睡。')

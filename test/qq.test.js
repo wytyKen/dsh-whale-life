@@ -163,3 +163,21 @@ test('策略：私聊在 friends-only+reply 下放行唤醒；ignore 拦截；�
   await s3.handle({ type: 'private', userId: 30003, text: '陌生人' })
   assert.equal(wakes.length, 2)
 })
+
+// ---------- 路由桥裁决（src/behavior/routes.js decideSend） ----------
+
+test('decideSend：三档裁决与回话窗口', async () => {
+  const { decideSend } = await import('../src/behavior/routes.js')
+  const now = 1_000_000_000
+  const min = 60_000
+  // dry-run：一律草稿
+  assert.equal(decideSend({ approvalMode: 'dry-run', lastInboundAt: now, now }).execute, false)
+  // auto：直发
+  assert.equal(decideSend({ approvalMode: 'auto', lastInboundAt: undefined, now }).execute, true)
+  // semi：30 分钟内来过 → 可回话
+  assert.equal(decideSend({ approvalMode: 'semi', lastInboundAt: now - 5 * min, now }).execute, true)
+  // semi：窗口外来信 → 只能草稿
+  assert.equal(decideSend({ approvalMode: 'semi', lastInboundAt: now - 31 * min, now }).execute, false)
+  // semi：从未来信（主动搭讪）→ 草稿
+  assert.equal(decideSend({ approvalMode: 'semi', lastInboundAt: undefined, now }).execute, false)
+})
