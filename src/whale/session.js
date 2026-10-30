@@ -13,6 +13,7 @@ export function createSessionBridge({ controller, whaleHome, cwd, personaBlock, 
   let booted = false
   let ready = false
   let tail = Promise.resolve()
+  let currentAbort = null
 
   async function load() {
     if (state) return state
@@ -42,9 +43,12 @@ export function createSessionBridge({ controller, whaleHome, cwd, personaBlock, 
         prefix = block + '\n\n'
         st.personaHash = crypto.createHash('sha256').update(block).digest('hex')
       }
+      // sessionController 的 create/prompt 都需要显式 AbortSignal
+      currentAbort = new AbortController()
+      const signal = currentAbort.signal
       if (!ready) {
         try {
-          await controller.create({ sessionId: st.sessionId, cwd })
+          await controller.create({ sessionId: st.sessionId, cwd }, signal)
         } catch {
           log('沿用现有会话；若投递失败将重试')
         }
@@ -55,7 +59,7 @@ export function createSessionBridge({ controller, whaleHome, cwd, personaBlock, 
           sessionId: st.sessionId,
           mode: 'queue',
           content: [{ type: 'text', text: prefix + text }],
-        })
+        }, signal)
       } catch (e) {
         ready = false
         throw e
@@ -68,5 +72,10 @@ export function createSessionBridge({ controller, whaleHome, cwd, personaBlock, 
     return job
   }
 
-  return { wake, get sessionId() { return state?.sessionId ?? null } }
+  // DSH 关闭时中止在途投递
+  function abort() {
+    currentAbort?.abort()
+  }
+
+  return { wake, abort, get sessionId() { return state?.sessionId ?? null } }
 }

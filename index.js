@@ -1,4 +1,5 @@
 import path from 'node:path'
+import { mkdir, appendFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { loadConfig } from './src/config/schema.js'
 import { resolvePersona } from './src/config/persona.js'
@@ -11,17 +12,27 @@ import { personaBlock, wakePrompt } from './src/whale/wake.js'
 import { createApprover, modeFromConfig } from './src/behavior/approver.js'
 
 export const name = 'dsh-whale-life'
-// 不声明 inject：cordis 4.x 声明即必需，裸 profile（无 Web 组合）会永远 pending。
-// sessionController（DSH Desktop / dsh web 提供）改为每次心跳时惰性获取，就绪前优雅降级。
+// cordis 4.x：访问 ctx.sessionController 必须在此声明（注入即必需依赖）。
+// 该服务由 Web 组合（DSH Desktop / dsh web）挂载；无会话服务的裸 profile 中
+// 插件保持 pending——没有会话就没有唤醒，语义上正确。
+export const inject = ['sessionController']
 
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)))
+const LOG_FILE = path.join(PLUGIN_ROOT, 'data', 'whale-life.log')
 
 export function apply(ctx, config = {}) {
-  const log = (...args) => console.log('[whale-life]', ...args)
+  // 双通道日志：stdout 可能被宿主应用吞掉，文件日志保证「可观察」
+  mkdir(path.dirname(LOG_FILE), { recursive: true }).catch(() => {})
+  const log = (...args) => {
+    console.log('[whale-life]', ...args)
+    appendFile(LOG_FILE, `[${new Date().toISOString()}] ${args.join(' ')}\n`).catch(() => {})
+  }
+  log(`apply() 已调用（插件模块加载成功）`)
   const result = loadConfig(config)
   let ticker = null
 
-  ctx.on('ready', async () => {
+  // cordis 4.x 没有 'ready' 事件：启动逻辑在 apply 内直接跑，清理走 ctx.effect
+  const bootstrap = async () => {
     if (!result.ok) {
       log('✗ 配置校验失败，她无法醒来：')
       for (const err of result.errors) log('  -', err)
@@ -32,8 +43,8 @@ export function apply(ctx, config = {}) {
       return
     }
 
-    // 惰性获取：Web 组合可能在插件就绪之后才挂载 sessionController
-    const controller = () => ctx.sessionController
+    // 注入已声明，apply 时服务必然可用
+    const controller = ctx.sessionController
 
     const whales = []
     for (const whale of result.whales) {
@@ -50,7 +61,7 @@ export function apply(ctx, config = {}) {
         fired: new Set(),
         approver: createApprover({ mode: modeFromConfig(whale.approvalMode) }),
         bridge: createSessionBridge({
-          controller: { create: (r) => controller().create(r), prompt: (r) => controller().prompt(r) },
+          controller,
           whaleHome: home,
           cwd: home,
           personaBlock: () => personaBlock(persona.value, whale),
@@ -59,8 +70,8 @@ export function apply(ctx, config = {}) {
       })
       log(vitalsLine(whale, persona.value))
     }
-    if (!controller()) {
-      log('⚠ sessionController 尚未就绪：心跳照常，会话唤醒将在 Web 组合就绪后自动可用')
+    if (!controller) {
+      log('⚠ sessionController 缺失：心跳照常，但无法唤醒会话')
     }
 
     ticker = createTicker({
@@ -75,7 +86,7 @@ export function apply(ctx, config = {}) {
             if (!fire) continue
             w.fired.add(key)
             if (w.fired.size > 10_000) w.fired.clear()
-            if (!controller()) continue
+            if (!controller) continue
             try {
               const memory = await recallContext(w.home)
               await w.bridge.wake(wakePrompt({
@@ -88,16 +99,20 @@ export function apply(ctx, config = {}) {
               log(`「${w.persona.name}」醒来：${entry.action}`)
             } catch (e) {
               w.fired.delete(key)
-              log(`唤醒失败（下一轮重试）：${e.message}`)
+              const detail = [e?.data?.reason, e?.cause?.message, e?.stack?.split('\n')?.[1]]
+                .filter(Boolean).join(' | ')
+              log(`唤醒失败（下一轮重试）：${e.message}${detail ? ' ← ' + detail : ''}`)
             }
           }
         }
       },
     })
     ticker.start()
-  })
+  }
 
-  ctx.on('dispose', () => {
+  bootstrap().catch((e) => log(`启动失败：${e.message}`))
+
+  ctx.effect(() => () => {
     ticker?.stop()
     log('DSH 关闭，鲸生沉睡。')
   })
