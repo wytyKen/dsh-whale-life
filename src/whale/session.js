@@ -56,6 +56,9 @@ export function createSessionBridge({ controller, whaleHome, cwd, personaBlock, 
       }
       try {
         await controller.prompt({
+          // requestId 必传：包装层会把它放进消息 source，缺失时 rpcId=undefined
+          // 会污染事件并触发 "carries non-JSON-serializable data"
+          requestId: `whale-life-${Date.now()}`,
           sessionId: st.sessionId,
           mode: 'queue',
           content: [{ type: 'text', text: prefix + text }],

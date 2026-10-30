@@ -99,7 +99,7 @@ export function apply(ctx, config = {}) {
               log(`「${w.persona.name}」醒来：${entry.action}`)
             } catch (e) {
               w.fired.delete(key)
-              const detail = [e?.data?.reason, e?.cause?.message, e?.stack?.split('\n')?.[1]]
+              const detail = [e?.details?.reason ?? e?.data?.reason, e?.code, e?.cause?.message]
                 .filter(Boolean).join(' | ')
               log(`唤醒失败（下一轮重试）：${e.message}${detail ? ' ← ' + detail : ''}`)
             }
