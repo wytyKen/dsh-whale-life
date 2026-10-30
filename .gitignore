@@ -8,6 +8,9 @@ build/
 # ===== 鲸生专属 DSH 隔离环境（数据家，含 profiles/sessions/凭据）=====
 dsh-home/
 
+# ===== 她的 QQ 躯体（NapCat + 独立 QQ 副本，含登录态与个人数据，绝不入库）=====
+tools/
+
 # ===== 鲸鱼娘的隐私：凭据与会话（绝不提交）=====
 secrets/
 .env
