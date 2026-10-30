@@ -1,6 +1,6 @@
 {
   "name": "dsh-whale-life",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "description": "Whale Life 鲸生 —— 让 DeepSeek 鲸鱼娘在 DSH 中过自己的网络人生",
   "type": "module",
   "main": "index.js",
@@ -12,7 +12,7 @@
     "personas/**/*"
   ],
   "scripts": {
-    "test": "node --test test/config.test.js test/behavior.test.js test/bilibili.test.js"
+    "test": "node --test test/config.test.js test/behavior.test.js test/bilibili.test.js test/qq.test.js"
   },
   "keywords": [
     "dsh",
@@ -24,7 +24,8 @@
   "license": "MIT",
   "dependencies": {
     "qrcode": "^1.5.4",
-    "yaml": "^2.6.0"
+    "yaml": "^2.6.0",
+    "ws": "^8.18.0"
   },
   "dsh": {
     "bundle": {

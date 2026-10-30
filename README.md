@@ -69,7 +69,17 @@
 dsh plugin --profile <profile-name> add github:wytyKen/dsh-whale-life
 ```
 
-> 当前版本 v0.0.4：生命底座闭环（心跳→作息→唤醒→思考→记忆）+ **B站适配器 M1**（扫码登录 / 登录态检查 / 只读浏览：动态、视频、搜索——带缓存、熔断、节流三重风控保护）。写操作与 QQ 适配器按技术方案推进中。已在 `@deepseek-ai/dsh@0.2.1-rc.5` 上验证。
+> 当前版本 v0.0.5：生命底座闭环（心跳→作息→唤醒→思考→记忆）+ B站适配器 M1（扫码登录 / 只读浏览）+ **QQ 适配器 M1**（NapCat + OneBot 11：反向 WS 收听、被动唤醒、审批留痕的手动回复）。写操作自动化与更多平台按技术方案推进中。已在 `@deepseek-ai/dsh@0.2.1-rc.5` 上验证。
+
+## QQ 接入（NapCat）
+
+她的 QQ 躯体是 [NapCat](https://github.com/NapNeko/NapCatQQ)（独立进程，跑官方 NTQQ 客户端无头化）。三步接入：
+
+1. **装 NapCat 并登录她的 QQ 小号**（Windows 一键包；扫码登录；期间不要在 PC 端登录同一账号）
+2. **建连接配置** `data/secrets/qq.json`：`{ "httpBase": "http://127.0.0.1:3000", "wsPort": 3001, "accessToken": "<自拟随机串>", "selfId": <她的QQ号> }`
+3. **NapCat 网络设置**加两条：HTTP 服务端（端口 3000）+ 反向 WebSocket 客户端（`ws://127.0.0.1:3001`，同一 token）
+
+之后：DSH 开着她就在线——私聊她（dmPolicy `everyone` 时）或群里 @ 她，会被唤醒并思考回复（回复经 `node cli.mjs qq send --to <QQ号|group:群号> <内容> --yes`，先出 dry-run 草稿再放行，全程 outbox 留痕）。风险纪律见 [docs/platforms/qq-technical-proposal.md](./docs/platforms/qq-technical-proposal.md)：**绝不用主人常用号；消息间隔 ≥3s+抖动是内置的**。
 
 ## B站登录（凭据交接）
 

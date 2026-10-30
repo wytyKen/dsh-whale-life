@@ -10,6 +10,8 @@ import { loadCredentials, createCredentialStore, protectFile } from './src/platf
 import { QrAuth, verifyAccount } from './src/platforms/bilibili/auth.js'
 import { createBiliClient } from './src/platforms/bilibili/api.js'
 import { createReader } from './src/platforms/bilibili/reader.js'
+import { loadQQConfig } from './src/platforms/qq/index.js'
+import { createQQApi } from './src/platforms/qq/api.js'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)))
 const CRED_FILE = path.join(ROOT, 'data', 'secrets', 'bili.json')
@@ -88,8 +90,9 @@ async function biliStatus() {
 }
 
 async function main() {
+  if (platform === 'qq') return await qqMain()
   if (platform !== 'bili') {
-    out({ ok: false, error: '用法：node cli.mjs bili <login|status|nav|dynamic|video|search|sessions> [参数]' })
+    out({ ok: false, error: '用法：node cli.mjs bili <login|status|nav|dynamic|video|search|sessions>  |  qq <status|self|friends|send> [参数]' })
     process.exit(1)
   }
   try {
@@ -144,6 +147,54 @@ async function main() {
     out({ ok: false, error: e.message })
     process.exit(1)
   }
+}
+
+async function qqMain() {
+  const config = await loadQQConfig()
+  if (!config) {
+    out({
+      ok: false,
+      error: `缺少连接配置 ${path.join(ROOT, 'data', 'secrets', 'qq.json')}`,
+      hint: '写入 { "httpBase": "http://127.0.0.1:3000", "wsPort": 3001, "accessToken": "<token>", "selfId": <QQ号> }，并在 NapCat 配好 HTTP 服务端与反向 WS（详见 docs/platforms/qq-technical-proposal.md）',
+    })
+    process.exit(2)
+  }
+  const api = createQQApi({ config })
+  const args = process.argv.slice(process.argv.indexOf('qq') + 1)
+  const cmd = args[0]
+  if (cmd === 'status' || cmd === 'self') {
+    try {
+      const info = await api.getLoginInfo()
+      return out({ ok: true, account: info, httpBase: config.httpBase })
+    } catch (e) {
+      return out({ ok: false, error: e.message, hint: '确认 NapCat 已运行且 HTTP 服务端已配置' })
+    }
+  }
+  if (cmd === 'friends') {
+    const list = await api.getFriendList()
+    return out({ ok: true, count: list?.length, friends: (list ?? []).slice(0, 20).map((f) => ({ qq: f.user_id, name: f.nickname, remark: f.remark })) })
+  }
+  if (cmd === 'send') {
+    const toIdx = args.indexOf('--to')
+    const yesIdx = args.indexOf('--yes')
+    const target = toIdx >= 0 ? args[toIdx + 1] : null
+    const text = args.slice(toIdx >= 0 ? toIdx + 2 : 1).filter((a) => a !== '--yes' && a !== target).join(' ')
+    if (!target || !text) throw new Error('用法：qq send --to <QQ号|group:群号> <内容> [--yes]')
+    const isGroup = String(target).startsWith('group:')
+    const peer = isGroup ? String(target).slice(6) : target
+    // 审计留痕：无论发不发都先落 outbox
+    const outboxDir = path.join(ROOT, 'data', 'outbox')
+    fs.mkdirSync(outboxDir, { recursive: true })
+    const record = { at: new Date().toISOString(), via: 'cli', to: target, text, executed: yesIdx >= 0 }
+    fs.writeFileSync(path.join(outboxDir, `qq-${Date.now()}.json`), JSON.stringify(record, null, 2) + '\n')
+    if (yesIdx < 0) {
+      return out({ ok: false, executed: false, draft: record, hint: '这是 dry-run 草稿（已存 outbox）。确认无误后加 --yes 真正发送。' })
+    }
+    const r = isGroup ? await api.sendGroup(peer, text) : await api.sendPrivate(peer, text)
+    return out({ ok: true, messageId: r?.message_id, record })
+  }
+  out({ ok: false, error: `未知命令：${cmd}（status | self | friends | send）` })
+  process.exit(1)
 }
 
 await main()

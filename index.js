@@ -10,6 +10,7 @@ import { recallContext, appendDiary } from './src/memory/store.js'
 import { createSessionBridge } from './src/whale/session.js'
 import { personaBlock, wakePrompt } from './src/whale/wake.js'
 import { createApprover, modeFromConfig } from './src/behavior/approver.js'
+import { registerQQ } from './src/platforms/qq/index.js'
 
 export const name = 'dsh-whale-life'
 // cordis 4.x：访问 ctx.sessionController 必须在此声明（注入即必需依赖）。
@@ -30,6 +31,11 @@ function capabilitiesFor(whale) {
       `B站登录由主人完成：node "${path.join(PLUGIN_ROOT, 'cli.mjs')}" bili login（扫码，凭据存本地）`,
     )
   }
+  if (has('qq')) {
+    caps.push(
+      `QQ（被动收听 + 手动回复）：收到私聊或被 @ 时你会被唤醒；回复用 node "${path.join(PLUGIN_ROOT, 'cli.mjs')}" qq send --to <QQ号|group:群号> <内容> --yes`,
+    )
+  }
   return caps
 }
 
@@ -43,6 +49,7 @@ export function apply(ctx, config = {}) {
   log(`apply() 已调用（插件模块加载成功）`)
   const result = loadConfig(config)
   let ticker = null
+  const qqReceivers = []
 
   // cordis 4.x 没有 'ready' 事件：启动逻辑在 apply 内直接跑，清理走 ctx.effect
   const bootstrap = async () => {
@@ -82,6 +89,12 @@ export function apply(ctx, config = {}) {
         }),
       })
       log(vitalsLine(whale, persona.value))
+      // QQ 平台：装配接收端（NapCat 反向 WS）→ 被动唤醒
+      if (whale.accounts.some((a) => a.platform === 'qq')) {
+        const last = whales[whales.length - 1]
+        const qq = await registerQQ({ whale, bridge: last.bridge, log })
+        if (qq) { last.qq = qq; qqReceivers.push(qq) }
+      }
     }
     if (!controller) {
       log('⚠ sessionController 缺失：心跳照常，但无法唤醒会话')
@@ -127,6 +140,7 @@ export function apply(ctx, config = {}) {
   bootstrap().catch((e) => log(`启动失败：${e.message}`))
 
   ctx.effect(() => () => {
+    for (const qq of qqReceivers) qq.stop()
     ticker?.stop()
     log('DSH 关闭，鲸生沉睡。')
   })
