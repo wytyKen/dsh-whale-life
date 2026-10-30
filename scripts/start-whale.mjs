@@ -28,8 +28,11 @@ const qqRunning = spawnSync('tasklist', ['/FI', 'IMAGENAME eq QQ.exe'], { encodi
 if (qqRunning) {
   console.log('  QQ/NapCat 已在运行，跳过。')
 } else if (napcatDir) {
-  const args = qqId ? ['-q', qqId] : []
-  spawn('cmd', ['/c', 'napcat.bat', ...args], { cwd: napcatDir, detached: true, stdio: 'ignore', windowsHide: false }).unref()
+  // 注意：OneKey 的 napcat.bat 不转发参数（-q 会被吞掉导致退回二维码模式），
+  // 因此直接调用 NapCatWinBootMain.exe 并把 QQ 号作为快速登录参数传入。
+  const bootExe = path.join(napcatDir, 'NapCatWinBootMain.exe')
+  const args = qqId ? [qqId] : []
+  spawn(bootExe, args, { cwd: napcatDir, detached: true, stdio: 'ignore', windowsHide: false }).unref()
   console.log(`  NapCat 启动中（${qqId ? `快速登录 ${qqId}（来自 data/secrets/qq.json）` : '未找到 qq.json，将出二维码，用她的手机 QQ 扫一次'}）。`)
   console.log('  若弹出二维码窗口：用她的手机 QQ 扫码并授权。')
   await new Promise((r) => setTimeout(r, 8000))
