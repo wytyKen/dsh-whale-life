@@ -194,6 +194,6 @@ test('唤醒提示词：身份、记忆、动作、边界齐全', () => {
     { name: '小鲸', summary: '好奇的鲸鱼娘', traits: ['好奇', '活泼'], tone: '活泼', exampleLines: ['哇！'] },
     whale,
   )
-  assert.match(block, /好奇、活泼/)
+  assert.match(block, /好奇；活泼/)
   assert.match(block, /「哇！」/)
 })
