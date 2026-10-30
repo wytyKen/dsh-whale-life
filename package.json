@@ -1,6 +1,6 @@
 {
   "name": "dsh-whale-life",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "description": "Whale Life 鲸生 —— 让 DeepSeek 鲸鱼娘在 DSH 中过自己的网络人生",
   "type": "module",
   "main": "index.js",
