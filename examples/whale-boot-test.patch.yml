@@ -1,0 +1,23 @@
+# =====================================================================
+# 鲸生链路验证 overlay —— 用于首次部署后验证 心跳→唤醒→记忆 全链路
+#
+# 用法：dsh.cmd --profile whale --patch examples\whale-boot-test.patch.yml
+# 效果：她每分钟醒来一次（每次醒来会消耗模型 token），看到醒来日志后
+#       Ctrl+C 关闭，换回 whale.patch.example.yml 的正常作息即可。
+# =====================================================================
+
+- insert:
+    - id: whale-life
+      name: dsh-whale-life
+      config:
+        whales:
+          - id: lingxi
+            persona:
+              template: energetic
+              custom:
+                name: 泠汐
+            approvalMode: dry-run
+            rhythm:
+              cron:
+                - expr: "* * * * *"
+                  action: 写一行今日心情到 memory/diary.md 里，一句话就好，然后继续休息
