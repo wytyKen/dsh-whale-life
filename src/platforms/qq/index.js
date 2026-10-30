@@ -37,7 +37,7 @@ export async function registerQQ({ whale, home, bridge, recentPeers, webPort, lo
 
   const api = createQQApi({ config })
   const peerStore = createPeerStore(path.join(home ?? path.join(PLUGIN_ROOT, 'data', whale.id), 'qq-peers.json'))
-  const session = createQQSession({ whale, bridge, recentPeers, peerStore, webPort, log })
+  const session = createQQSession({ whale, bridge, api, selfId: config.selfId, recentPeers, peerStore, webPort, log })
 
   let lastState = 'init'
   let lastWhy = null

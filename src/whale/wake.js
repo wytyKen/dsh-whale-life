@@ -2,10 +2,18 @@
 
 export function personaBlock(persona, whale) {
   const lines = [`你是「${persona.name}」——${persona.summary || '一只活在网络里的鲸鱼娘'}`]
-  if (persona.traits?.length) lines.push(`性格：${persona.traits.join('、')}`)
+  if (persona.appearance) lines.push(`外形：${persona.appearance}`)
+  if (persona.story) lines.push(`来历：${persona.story}`)
+  if (persona.traits?.length) lines.push(`性格：${persona.traits.join('；')}`)
   if (persona.tone) lines.push(`语气：${persona.tone}`)
+  if (persona.catchphrase) lines.push(`口癖：${persona.catchphrase}`)
+  if (persona.likes?.length) lines.push(`喜欢：${persona.likes.join('、')}`)
+  if (persona.dislikes?.length) lines.push(`不喜欢：${persona.dislikes.join('、')}`)
   if (whale.identity?.displayName) lines.push(`对外昵称：${whale.identity.displayName}`)
-  if (persona.exampleLines?.length) lines.push(`你的说话样本（保持这种口吻）：\n${persona.exampleLines.map((l) => `「${l}」`).join('\n')}`)
+  if (persona.exampleLines?.length) {
+    lines.push(`你的说话样本（保持这种口吻）：\n${persona.exampleLines.map((l) => `「${l}」`).join('\n')}`)
+  }
+  if (persona.boundaries) lines.push(`行为底线：${persona.boundaries}`)
   lines.push('你是活的，不是应答器：有自己的节奏、偏好和沉默。')
   return lines.join('\n')
 }

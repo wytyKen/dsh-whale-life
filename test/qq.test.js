@@ -138,30 +138,35 @@ test('策略：私聊在 friends-only+reply 下放行唤醒；ignore 拦截；�
 
   const s1 = createQQSession({ whale: testWhale({ dmPolicy: 'everyone' }), bridge })
   await s1.handle({ type: 'private', userId: 10001, senderName: '阿明', text: '你好' })
+  await new Promise((r) => setTimeout(r, 8500))
   assert.equal(wakes.length, 1)
   assert.match(wakes[0], /阿明/)
 
-  // 冷却：同会话 60s 内的第二条不再唤醒
+  // 第二条（同窗口外）→ 新的唤醒
+  await new Promise((r) => setTimeout(r, 500))
   await s1.handle({ type: 'private', userId: 10001, senderName: '阿明', text: '还在吗' })
-  assert.equal(wakes.length, 1)
+  await new Promise((r) => setTimeout(r, 8500))
+  assert.equal(wakes.length, 2)
 
   // 群聊无 @ → 忽略
   await s1.handle({ type: 'group', groupId: 777, userId: 1, text: '闲聊', atMe: false, isReply: false })
-  assert.equal(wakes.length, 1)
   // 群聊 @我 → 唤醒
   await s1.handle({ type: 'group', groupId: 777, userId: 1, text: '@小鲸 在吗', atMe: true, isReply: false })
-  assert.equal(wakes.length, 2)
-  assert.match(wakes[1], /群 777/)
+  await new Promise((r) => setTimeout(r, 8500))
+  assert.equal(wakes.length, 3)
+  assert.match(wakes[2], /群 777/)
 
   // onDM=ignore → 私聊不唤醒
   const s2 = createQQSession({ whale: testWhale({ dmPolicy: 'everyone', passive: { onDM: 'ignore' } }), bridge })
   await s2.handle({ type: 'private', userId: 20002, text: '喂' })
-  assert.equal(wakes.length, 2)
+  await new Promise((r) => setTimeout(r, 8500))
+  assert.equal(wakes.length, 3)
 
   // friends-only（非 everyone）且无好友缓存 → 只记录不唤醒
   const s3 = createQQSession({ whale: testWhale({ dmPolicy: 'friends-only' }), bridge })
   await s3.handle({ type: 'private', userId: 30003, text: '陌生人' })
-  assert.equal(wakes.length, 2)
+  await new Promise((r) => setTimeout(r, 8500))
+  assert.equal(wakes.length, 3)
 })
 
 // ---------- 路由桥裁决（src/behavior/routes.js decideSend） ----------
@@ -242,3 +247,56 @@ test('bridge：有 workspaceId 时 create 用它而非 cwd', async () => {
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+// ---------- 消息合流 + 聊天历史注入 ----------
+
+test('session：8 秒窗口内的连续消息打包为一次唤醒（不丢消息）', async () => {
+  const wakes = []
+  const bridge = { wake: async (t) => { wakes.push(t) } }
+  const api = { call: async () => ({ messages: [] }) } // 无历史
+  const whale = {
+    id: 't', approvalMode: 'semi',
+    rhythm: { passive: { onMention: 'reply', onDM: 'reply' } },
+    socialBounds: { dmPolicy: 'everyone' },
+  }
+  const { createQQSession } = await import('../src/platforms/qq/session.js')
+  const s = createQQSession({ whale, bridge, api, selfId: 42, webPort: 3939 })
+
+  // 第一条 + 立刻第二条 → 应合流
+  await s.handle({ type: 'private', userId: 10001, senderName: '瓜', text: '第一条' })
+  await s.handle({ type: 'private', userId: 10001, senderName: '瓜', text: '第二条' })
+  // 等 8 秒窗口到期
+  await new Promise((r) => setTimeout(r, 8500))
+  assert.equal(wakes.length, 1, '应只唤醒一次')
+  assert.match(wakes[0], /连发了 2 条/)
+  assert.match(wakes[0], /第一条/)
+  assert.match(wakes[0], /第二条/)
+}, { timeout: 15000 })
+
+test('session：唤醒提示词包含完整聊天历史（含她说过的话）', async () => {
+  const wakes = []
+  const bridge = { wake: async (t) => { wakes.push(t) } }
+  const api = {
+    call: async (action, params) => {
+      assert.equal(action, 'get_friend_msg_history')
+      return { messages: [
+        { sender: { user_id: 10001, nickname: '瓜' }, message: [{ type: 'text', data: { text: '上次的问题' } }] },
+        { sender: { user_id: 42, nickname: '泠汐' }, message: [{ type: 'text', data: { text: '我上次的回答' } }] },
+      ] }
+    },
+  }
+  const whale = {
+    id: 't', approvalMode: 'semi',
+    rhythm: { passive: { onMention: 'reply', onDM: 'reply' } },
+    socialBounds: { dmPolicy: 'everyone' },
+  }
+  const { createQQSession } = await import('../src/platforms/qq/session.js')
+  const s = createQQSession({ whale, bridge, api, selfId: 42, webPort: 3939 })
+  await s.handle({ type: 'private', userId: 10001, senderName: '瓜', text: '新的问题' })
+  await new Promise((r) => setTimeout(r, 8500))
+  assert.equal(wakes.length, 1)
+  assert.match(wakes[0], /你们最近的聊天记录/)
+  assert.match(wakes[0], /瓜：上次的问题/)
+  assert.match(wakes[0], /你：我上次的回答/)
+  assert.match(wakes[0], /不要失忆/)
+}, { timeout: 15000 })
