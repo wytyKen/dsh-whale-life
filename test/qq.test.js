@@ -181,3 +181,64 @@ test('decideSend：三档裁决与回话窗口', async () => {
   // semi：从未来信（主动搭讪）→ 草稿
   assert.equal(decideSend({ approvalMode: 'semi', lastInboundAt: undefined, now }).execute, false)
 })
+
+// ---------- 离线补收 ----------
+
+test('catchup：peer 持久化与补收唤醒', async () => {
+  const { createPeerStore, runCatchUp } = await import('../src/platforms/qq/catchup.js')
+  const dir = mkdtempSync(path.join(tmpdir(), 'wl-catchup-'))
+  try {
+    const T0 = Math.floor(Date.now() / 1000)
+    const file = path.join(dir, 'qq-peers.json')
+    const store = createPeerStore(file)
+    // lastAt 定在 60 秒前：之后对方来过一条、她自己发过一条
+    await store.record('10001', { name: '瓜', kind: 'private', lastAtOverride: (T0 - 60) * 1000 })
+
+    const api = {
+      call: async (action, params) => {
+        assert.equal(action, 'get_friend_msg_history')
+        assert.equal(params.user_id, 10001)
+        return { messages: [
+          { time: T0 - 3600, message: [{ type: 'text', data: { text: '很久以前的旧消息' } }], sender: { user_id: 10001 } },
+          { time: T0 - 30, message: [{ type: 'text', data: { text: '她自己发的回复' } }], sender: { user_id: 42 } },
+          { time: T0 - 10, message: [{ type: 'text', data: { text: '睡着时的新消息' } }], sender: { user_id: 10001 } },
+        ] }
+      },
+    }
+    const wakes = []
+    const bridge = { wake: async (t) => wakes.push(t) }
+    const woken = await runCatchUp({ api, bridge, peersFile: file, selfId: 42, routePort: 3939 })
+    assert.equal(woken, 1)
+    assert.match(wakes[0], /睡着时的新消息/)
+    assert.doesNotMatch(wakes[0], /她自己发的回复/)
+    // 补收后 lastAt 已刷新到现在，再次补收应无新消息
+    const woken2 = await runCatchUp({ api, bridge, peersFile: file, selfId: 42, routePort: 3939 })
+    assert.equal(woken2, 0)
+    assert.equal(wakes.length, 1)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+// ---------- 会话桥 workspaceId ----------
+
+test('bridge：有 workspaceId 时 create 用它而非 cwd', async () => {
+  const { createSessionBridge } = await import('../src/whale/session.js')
+  const creates = []
+  const controller = {
+    create: async (req) => { creates.push(req); return { sessionId: req.sessionId } },
+    prompt: async () => {},
+  }
+  const dir = mkdtempSync(path.join(tmpdir(), 'wl-ws-'))
+  try {
+    const bridge = createSessionBridge({
+      controller, whaleHome: dir, cwd: dir, workspaceId: 'ws-1',
+      personaBlock: () => 'p',
+    })
+    await bridge.wake('hi')
+    assert.equal(creates[0].workspaceId, 'ws-1')
+    assert.equal(creates[0].cwd, undefined)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})

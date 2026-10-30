@@ -7,7 +7,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import crypto from 'node:crypto'
 
-export function createSessionBridge({ controller, whaleHome, cwd, personaBlock, model, log = () => {} }) {
+export function createSessionBridge({ controller, whaleHome, cwd, workspaceId, personaBlock, model, log = () => {} }) {
   const stateFile = path.join(whaleHome, 'session.json')
   let state = null
   let booted = false
@@ -49,7 +49,11 @@ export function createSessionBridge({ controller, whaleHome, cwd, personaBlock, 
       const signal = currentAbort.signal
       if (!ready) {
         try {
-          await controller.create({ sessionId: st.sessionId, cwd }, signal)
+          // workspaceId 与 cwd 互斥：有工作区则挂载（UI 分组），否则回退纯目录
+          await controller.create(
+            workspaceId ? { sessionId: st.sessionId, workspaceId } : { sessionId: st.sessionId, cwd },
+            signal,
+          )
         } catch {
           log('沿用现有会话；若投递失败将重试')
         }

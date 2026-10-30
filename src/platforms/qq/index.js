@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url'
 import { createQQApi } from './api.js'
 import { startQQReceiver } from './receiver.js'
 import { createQQSession } from './session.js'
+import { createPeerStore } from './catchup.js'
 
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
 const QQ_CONFIG_FILE = path.join(PLUGIN_ROOT, 'data', 'secrets', 'qq.json')
@@ -27,7 +28,7 @@ export async function loadQQConfig(file = QQ_CONFIG_FILE) {
  * 为一只配置了 qq 平台的鲸鱼装配 QQ 能力。
  * @returns {{ stop(): void, api, state: () => object } | null} 未配置连接时返回 null
  */
-export async function registerQQ({ whale, bridge, recentPeers, webPort, log = () => {}, config: override } = {}) {
+export async function registerQQ({ whale, home, bridge, recentPeers, webPort, log = () => {}, config: override } = {}) {
   const config = override ?? await loadQQConfig()
   if (!config) {
     log(`⚠ #${whale.id} 配置了 QQ，但缺少连接文件 ${QQ_CONFIG_FILE} —— QQ 未接入（见 docs/platforms/qq-technical-proposal.md §4）`)
@@ -35,7 +36,8 @@ export async function registerQQ({ whale, bridge, recentPeers, webPort, log = ()
   }
 
   const api = createQQApi({ config })
-  const session = createQQSession({ whale, bridge, recentPeers, webPort, log })
+  const peerStore = createPeerStore(path.join(home ?? path.join(PLUGIN_ROOT, 'data', whale.id), 'qq-peers.json'))
+  const session = createQQSession({ whale, bridge, recentPeers, peerStore, webPort, log })
 
   let lastState = 'init'
   let lastWhy = null
@@ -48,6 +50,8 @@ export async function registerQQ({ whale, bridge, recentPeers, webPort, log = ()
 
   return {
     api,
+    selfId: config.selfId ?? null,
+    peersFile: path.join(home ?? path.join(PLUGIN_ROOT, 'data', whale.id), 'qq-peers.json'),
     stop: () => receiver.stop(),
     state: () => ({ receiver: lastState, why: lastWhy, port: receiver.port }),
   }

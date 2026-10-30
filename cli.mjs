@@ -150,6 +150,10 @@ async function main() {
 }
 
 async function qqMain() {
+  if (command === 'setup') {
+    const { qqSetup } = await import('./scripts/qq-setup.mjs')
+    return qqSetup()
+  }
   const config = await loadQQConfig()
   if (!config) {
     out({

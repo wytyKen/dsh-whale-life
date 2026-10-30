@@ -7,12 +7,19 @@ import { fileURLToPath } from 'node:url'
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
 const COOLDOWN_MS = 60_000 // 同一会话两次唤醒的最小间隔（防消息轰炸把自己刷爆）
 
-export function createQQSession({ whale, bridge, recentPeers, webPort, log = () => {} }) {
+export function createQQSession({ whale, bridge, recentPeers, peerStore, webPort, log = () => {} }) {
   const passive = whale.rhythm.passive
   const dmPolicy = whale.socialBounds.dmPolicy
   const cooldowns = new Map()
 
   async function handle(message) {
+    // ── 来信登记（在策略过滤之前：补收时间线与回话窗口都以真实来信为准）──
+    if (message.type === 'private' && recentPeers) {
+      const k = String(message.userId)
+      recentPeers.set(k, Date.now())
+      peerStore?.record(k, { name: message.senderName, kind: 'private' }).catch(() => {})
+    }
+
     // ── 策略过滤 ──────────────────────────────────────────
     if (message.type === 'group') {
       // 群聊：只响应 @我 / 回复我，其余当背景噪音
@@ -34,9 +41,9 @@ export function createQQSession({ whale, bridge, recentPeers, webPort, log = () 
     cooldowns.set(key, Date.now())
     if (cooldowns.size > 500) cooldowns.clear()
 
-    // 记录回话窗口（semi 档「只能回话不能搭讪」的判定依据）
+    // 记录群聊回话窗口（私聊已在来信登记处记录）
     const peerKey = message.type === 'group' ? `group:${message.groupId}` : String(message.userId)
-    if (recentPeers) {
+    if (message.type === 'group' && recentPeers) {
       recentPeers.set(peerKey, Date.now())
       if (recentPeers.size > 200) recentPeers.clear()
     }

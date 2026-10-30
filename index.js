@@ -12,12 +12,13 @@ import { personaBlock, wakePrompt } from './src/whale/wake.js'
 import { createApprover, modeFromConfig } from './src/behavior/approver.js'
 import { startRouteServer } from './src/behavior/routes.js'
 import { registerQQ } from './src/platforms/qq/index.js'
+import { runCatchUp } from './src/platforms/qq/catchup.js'
 
 export const name = 'dsh-whale-life'
 // cordis 4.x：访问服务必须在此声明（注入即必需依赖）。
 // sessionController：唤醒她的会话（Web 组合挂载）。
 // 行动路由已改为插件自有的独立 HTTP 服务器（127.0.0.1:3939），不再依赖 webServer。
-export const inject = ['sessionController']
+export const inject = ['sessionController', 'workspaceRegistry']
 
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)))
 const LOG_FILE = path.join(PLUGIN_ROOT, 'data', 'whale-life.log')
@@ -54,6 +55,7 @@ export function apply(ctx, config = {}) {
   const qqRegistry = new Map() // whaleId → { whale, api, recentPeers }
   let stopRoutes = null
   let routePort = null
+  const pendingCatchups = []
 
   // cordis 4.x 没有 'ready' 事件：启动逻辑在 apply 内直接跑，清理走 ctx.effect
   const bootstrap = async () => {
@@ -78,6 +80,19 @@ export function apply(ctx, config = {}) {
         continue
       }
       const home = await ensureWhaleDirs(whale.id, PLUGIN_ROOT)
+      // 工作区挂载：让她的会话在 DSH 界面归入以其家目录命名的工作区（而非「未分组」）
+      let workspaceId
+      try {
+        const registry = ctx.workspaceRegistry
+        if (registry) {
+          // registry.create 直接收路径字符串（Remote 层才收 {path} 包装）
+          const ws = await registry.create(home)
+          workspaceId = ws?.id ?? ws?.workspaceId ?? null
+          log(`工作区就绪：${ws?.title ?? home}${workspaceId ? '（新会话将归入）' : '（id 缺失，回退目录模式）'}`)
+        }
+      } catch (e) {
+        log(`工作区挂载失败（回退目录模式）：${e.message}`)
+      }
       whales.push({
         whale,
         persona: persona.value,
@@ -88,6 +103,7 @@ export function apply(ctx, config = {}) {
           controller,
           whaleHome: home,
           cwd: home,
+          ...(workspaceId ? { workspaceId } : {}),
           personaBlock: () => personaBlock(persona.value, whale),
           model: whale.runtime.model ?? 'deepseek-flash',
           log,
@@ -98,11 +114,12 @@ export function apply(ctx, config = {}) {
       if (whale.accounts.some((a) => a.platform === 'qq')) {
         const last = whales[whales.length - 1]
         const recentPeers = new Map() // peerKey → 最近来信时间（semi 档回话窗口判定用）
-        const qq = await registerQQ({ whale, bridge: last.bridge, recentPeers, webPort: () => routePort, log })
+        const qq = await registerQQ({ whale, home, bridge: last.bridge, recentPeers, webPort: () => routePort, log })
         if (qq) {
           last.qq = qq
           qqReceivers.push(qq)
           qqRegistry.set(whale.id, { whale, api: qq.api, recentPeers })
+          pendingCatchups.push({ api: qq.api, bridge: last.bridge, peersFile: qq.peersFile, selfId: qq.selfId })
         }
       }
     }
@@ -123,6 +140,16 @@ export function apply(ctx, config = {}) {
     })
     stopRoutes = routes.stop
     routePort = routes.port
+
+    // 离线补收：路由就绪后，把睡着期间错过的私聊补给她
+    for (const cu of pendingCatchups) {
+      try {
+        const woken = await runCatchUp({ ...cu, routePort, log })
+        if (woken) log(`离线补收完成：唤醒 ${woken} 个会话补看错过的消息`)
+      } catch (e) {
+        log(`离线补收失败（不影响其他功能）：${e.message}`)
+      }
+    }
     if (!controller) {
       log('⚠ sessionController 缺失：心跳照常，但无法唤醒会话')
     }

@@ -50,6 +50,10 @@ export function createQQApi({ config, fetch: fetcher = globalThis.fetch, now = D
   }
 
   return {
+    /** 任意 OneBot 动作（含 NapCat 扩展，如 get_friend_msg_history） */
+    call(action, params) {
+      return call(config, action, params, { fetch: fetcher })
+    },
     /** 私聊发送（高危动作，调用方须过审批门） */
     sendPrivate(userId, text) {
       return send('send_private_msg', { user_id: normalizeId(userId), message: text })
