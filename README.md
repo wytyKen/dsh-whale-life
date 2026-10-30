@@ -69,7 +69,7 @@
 dsh plugin --profile <profile-name> add github:wytyKen/dsh-whale-life
 ```
 
-> 当前版本 v0.0.3：配置系统、模板人设、记忆系统与作息心跳（cron 调度 + 会话唤醒 + 四档审批）已就绪；平台适配器（B站 / QQ）按技术方案推进中。已在 `@deepseek-ai/dsh@0.2.1-rc.5` 上验证。
+> 当前版本 v0.0.3+：**生命底座已闭环并通过真实运行验证**——心跳（60s tick）→ 作息（cron 调度，时区感知）→ 唤醒（DSH 专属会话）→ 思考（真实模型回合）→ 记忆（日记 + 事实库）。平台适配器（B站 / QQ）按技术方案推进中。已在 `@deepseek-ai/dsh@0.2.1-rc.5` 上验证。
 
 ## 当前状态
 
