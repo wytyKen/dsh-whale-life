@@ -1,17 +1,18 @@
 {
   "name": "dsh-whale-life",
-  "version": "0.0.2",
+  "version": "0.0.4",
   "description": "Whale Life 鲸生 —— 让 DeepSeek 鲸鱼娘在 DSH 中过自己的网络人生",
   "type": "module",
   "main": "index.js",
   "files": [
     "index.js",
+    "cli.mjs",
     "cordis.patch.yml",
     "src/**/*",
     "personas/**/*"
   ],
   "scripts": {
-    "test": "node --test test/config.test.js test/behavior.test.js"
+    "test": "node --test test/config.test.js test/behavior.test.js test/bilibili.test.js"
   },
   "keywords": [
     "dsh",
@@ -22,6 +23,7 @@
   ],
   "license": "MIT",
   "dependencies": {
+    "qrcode": "^1.5.4",
     "yaml": "^2.6.0"
   },
   "dsh": {

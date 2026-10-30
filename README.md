@@ -69,7 +69,18 @@
 dsh plugin --profile <profile-name> add github:wytyKen/dsh-whale-life
 ```
 
-> 当前版本 v0.0.3+：**生命底座已闭环并通过真实运行验证**——心跳（60s tick）→ 作息（cron 调度，时区感知）→ 唤醒（DSH 专属会话）→ 思考（真实模型回合）→ 记忆（日记 + 事实库）。平台适配器（B站 / QQ）按技术方案推进中。已在 `@deepseek-ai/dsh@0.2.1-rc.5` 上验证。
+> 当前版本 v0.0.4：生命底座闭环（心跳→作息→唤醒→思考→记忆）+ **B站适配器 M1**（扫码登录 / 登录态检查 / 只读浏览：动态、视频、搜索——带缓存、熔断、节流三重风控保护）。写操作与 QQ 适配器按技术方案推进中。已在 `@deepseek-ai/dsh@0.2.1-rc.5` 上验证。
+
+## B站登录（凭据交接）
+
+她使用 B站能力前，主人做一次扫码交接（凭据只存本地 `data/secrets/`，永不入库）：
+
+```sh
+node cli.mjs bili login     # 终端出二维码，手机 B站 App 扫码确认
+node cli.mjs bili status    # 查看登录态与 API 保护层状态
+```
+
+之后她的唤醒提示词会自动获得 B站 只读能力（`dynamic` / `video` / `search`）。
 
 ## 当前状态
 

@@ -20,6 +20,19 @@ export const inject = ['sessionController']
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)))
 const LOG_FILE = path.join(PLUGIN_ROOT, 'data', 'whale-life.log')
 
+// 依配置生成她「能做什么」的能力清单（写给她的唤醒提示词）
+function capabilitiesFor(whale) {
+  const caps = []
+  const has = (platform) => whale.accounts.some((a) => a.platform === platform)
+  if (has('bilibili')) {
+    caps.push(
+      `B站（只读）：在你的终端执行 node "${path.join(PLUGIN_ROOT, 'cli.mjs')}" bili status / dynamic / video <BV号> / search <关键词>`,
+      `B站登录由主人完成：node "${path.join(PLUGIN_ROOT, 'cli.mjs')}" bili login（扫码，凭据存本地）`,
+    )
+  }
+  return caps
+}
+
 export function apply(ctx, config = {}) {
   // 双通道日志：stdout 可能被宿主应用吞掉，文件日志保证「可观察」
   mkdir(path.dirname(LOG_FILE), { recursive: true }).catch(() => {})
@@ -91,6 +104,7 @@ export function apply(ctx, config = {}) {
               const memory = await recallContext(w.home)
               await w.bridge.wake(wakePrompt({
                 persona: w.persona, whale: w.whale, action: entry.action, memory,
+                capabilities: capabilitiesFor(w.whale),
               }))
               await appendDiary(w.home, {
                 text: `醒来执行：${entry.action}`,
