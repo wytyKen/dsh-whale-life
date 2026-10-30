@@ -27,6 +27,20 @@ export async function listTemplates() {
   return files.filter((f) => f.endsWith('.yaml')).map((f) => f.replace(/\.yaml$/, ''))
 }
 
+/**
+ * 模板清单（设置页「人设模板选择」下拉用）：空白出生 + personas/ 目录全部模板。
+ * 单个模板解析失败只跳过该模板，不让整个接口 500。
+ */
+export async function listPersonas() {
+  const out = [{ id: BLANK_PERSONA.id, name: BLANK_PERSONA.name, summary: BLANK_PERSONA.summary, traits: [...BLANK_PERSONA.traits] }]
+  for (const id of await listTemplates()) {
+    const r = await resolvePersona({ template: id })
+    if (!r.ok) continue
+    out.push({ id, name: r.value.name, summary: r.value.summary, traits: Array.isArray(r.value.traits) ? r.value.traits : [] })
+  }
+  return out
+}
+
 async function loadTemplate(templateId) {
   const file = path.join(PERSONAS_DIR, `${templateId}.yaml`)
   if (!existsSync(file)) {

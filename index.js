@@ -110,16 +110,18 @@ export function apply(ctx, config = {}) {
         }),
       })
       log(vitalsLine(whale, persona.value))
-      // QQ 平台：装配接收端（NapCat 反向 WS）→ 被动唤醒
+      // QQ 平台：装配会话管理器 + 回复捕获器 + 接收端（NapCat 反向 WS）
       if (whale.accounts.some((a) => a.platform === 'qq')) {
         const last = whales[whales.length - 1]
-        const recentPeers = new Map() // peerKey → 最近来信时间（semi 档回话窗口判定用）
-        const qq = await registerQQ({ whale, home, bridge: last.bridge, recentPeers, webPort: () => routePort, log })
+        const recentPeers = new Map()
+        const qq = await registerQQ({
+          whale, home, controller, workspaceId,
+          persona: persona.value, recentPeers, log,
+        })
         if (qq) {
           last.qq = qq
           qqReceivers.push(qq)
           qqRegistry.set(whale.id, { whale, api: qq.api, recentPeers })
-          pendingCatchups.push({ api: qq.api, bridge: last.bridge, peersFile: qq.peersFile, selfId: qq.selfId })
         }
       }
     }

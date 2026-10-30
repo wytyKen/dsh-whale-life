@@ -132,41 +132,61 @@ function testWhale(overrides = {}) {
   }
 }
 
-test('策略：私聊在 friends-only+reply 下放行唤醒；ignore 拦截；群聊需 @我', async () => {
-  const wakes = []
-  const bridge = { wake: async (t) => { wakes.push(t) } }
+// ---------- 新架构：透传会话层 ----------
 
-  const s1 = createQQSession({ whale: testWhale({ dmPolicy: 'everyone' }), bridge })
+function mockDeps() {
+  const sent = []
+  const watched = []
+  const conversationManager = {
+    sendMessage: async (peerKey, peerName, text) => {
+      sent.push({ peerKey, peerName, text })
+      return { sessionId: `fake-${peerKey}`, primed: true, turns: 0 }
+    },
+    getSessionStats: async () => null,
+    saveMemory: async () => {},
+  }
+  const responder = {
+    watchForResponse: (peerKey, conv) => { watched.push(peerKey) },
+  }
+  return { conversationManager, responder, sent, watched }
+}
+
+test('策略：私聊 everyone 放行透传；ignore/friends-only 拦截；群聊需 @我', async () => {
+  const deps = mockDeps()
+
+  const s1 = createQQSession({ whale: testWhale({ dmPolicy: 'everyone' }), ...deps })
   await s1.handle({ type: 'private', userId: 10001, senderName: '阿明', text: '你好' })
   await new Promise((r) => setTimeout(r, 8500))
-  assert.equal(wakes.length, 1)
-  assert.match(wakes[0], /阿明/)
+  assert.equal(deps.sent.length, 1)
+  assert.equal(deps.sent[0].text, '你好', '消息原文透传，零包装')
 
-  // 第二条（同窗口外）→ 新的唤醒
+  // 第二条（同窗口外）→ 新投递
   await new Promise((r) => setTimeout(r, 500))
   await s1.handle({ type: 'private', userId: 10001, senderName: '阿明', text: '还在吗' })
   await new Promise((r) => setTimeout(r, 8500))
-  assert.equal(wakes.length, 2)
+  assert.equal(deps.sent.length, 2)
+  assert.equal(deps.sent[1].text, '还在吗')
 
   // 群聊无 @ → 忽略
   await s1.handle({ type: 'group', groupId: 777, userId: 1, text: '闲聊', atMe: false, isReply: false })
-  // 群聊 @我 → 唤醒
-  await s1.handle({ type: 'group', groupId: 777, userId: 1, text: '@小鲸 在吗', atMe: true, isReply: false })
+  // 群聊 @我 → 透传
+  await s1.handle({ type: 'group', groupId: 777, userId: 1, senderName: '群里人', text: '@小鲸 在吗', atMe: true, isReply: false })
   await new Promise((r) => setTimeout(r, 8500))
-  assert.equal(wakes.length, 3)
-  assert.match(wakes[2], /群 777/)
+  assert.equal(deps.sent.length, 3)
 
-  // onDM=ignore → 私聊不唤醒
-  const s2 = createQQSession({ whale: testWhale({ dmPolicy: 'everyone', passive: { onDM: 'ignore' } }), bridge })
+  // onDM=ignore → 私聊不透传
+  const deps2 = mockDeps()
+  const s2 = createQQSession({ whale: testWhale({ dmPolicy: 'everyone', passive: { onDM: 'ignore' } }), ...deps2 })
   await s2.handle({ type: 'private', userId: 20002, text: '喂' })
   await new Promise((r) => setTimeout(r, 8500))
-  assert.equal(wakes.length, 3)
+  assert.equal(deps2.sent.length, 0)
 
-  // friends-only（非 everyone）且无好友缓存 → 只记录不唤醒
-  const s3 = createQQSession({ whale: testWhale({ dmPolicy: 'friends-only' }), bridge })
+  // friends-only → 只记录
+  const deps3 = mockDeps()
+  const s3 = createQQSession({ whale: testWhale({ dmPolicy: 'friends-only' }), ...deps3 })
   await s3.handle({ type: 'private', userId: 30003, text: '陌生人' })
   await new Promise((r) => setTimeout(r, 8500))
-  assert.equal(wakes.length, 3)
+  assert.equal(deps3.sent.length, 0)
 })
 
 // ---------- 路由桥裁决（src/behavior/routes.js decideSend） ----------
@@ -248,55 +268,22 @@ test('bridge：有 workspaceId 时 create 用它而非 cwd', async () => {
   }
 })
 
-// ---------- 消息合流 + 聊天历史注入 ----------
+// ---------- 新架构：消息合流 ----------
 
-test('session：8 秒窗口内的连续消息打包为一次唤醒（不丢消息）', async () => {
-  const wakes = []
-  const bridge = { wake: async (t) => { wakes.push(t) } }
-  const api = { call: async () => ({ messages: [] }) } // 无历史
+test('session：8 秒窗口内的连续消息合为一次透传（不丢消息）', async () => {
+  const deps = mockDeps()
   const whale = {
     id: 't', approvalMode: 'semi',
     rhythm: { passive: { onMention: 'reply', onDM: 'reply' } },
     socialBounds: { dmPolicy: 'everyone' },
   }
-  const { createQQSession } = await import('../src/platforms/qq/session.js')
-  const s = createQQSession({ whale, bridge, api, selfId: 42, webPort: 3939 })
+  const s = createQQSession({ whale, ...deps })
 
-  // 第一条 + 立刻第二条 → 应合流
   await s.handle({ type: 'private', userId: 10001, senderName: '瓜', text: '第一条' })
   await s.handle({ type: 'private', userId: 10001, senderName: '瓜', text: '第二条' })
-  // 等 8 秒窗口到期
   await new Promise((r) => setTimeout(r, 8500))
-  assert.equal(wakes.length, 1, '应只唤醒一次')
-  assert.match(wakes[0], /连发了 2 条/)
-  assert.match(wakes[0], /第一条/)
-  assert.match(wakes[0], /第二条/)
-}, { timeout: 15000 })
-
-test('session：唤醒提示词包含完整聊天历史（含她说过的话）', async () => {
-  const wakes = []
-  const bridge = { wake: async (t) => { wakes.push(t) } }
-  const api = {
-    call: async (action, params) => {
-      assert.equal(action, 'get_friend_msg_history')
-      return { messages: [
-        { sender: { user_id: 10001, nickname: '瓜' }, message: [{ type: 'text', data: { text: '上次的问题' } }] },
-        { sender: { user_id: 42, nickname: '泠汐' }, message: [{ type: 'text', data: { text: '我上次的回答' } }] },
-      ] }
-    },
-  }
-  const whale = {
-    id: 't', approvalMode: 'semi',
-    rhythm: { passive: { onMention: 'reply', onDM: 'reply' } },
-    socialBounds: { dmPolicy: 'everyone' },
-  }
-  const { createQQSession } = await import('../src/platforms/qq/session.js')
-  const s = createQQSession({ whale, bridge, api, selfId: 42, webPort: 3939 })
-  await s.handle({ type: 'private', userId: 10001, senderName: '瓜', text: '新的问题' })
-  await new Promise((r) => setTimeout(r, 8500))
-  assert.equal(wakes.length, 1)
-  assert.match(wakes[0], /你们最近的聊天记录/)
-  assert.match(wakes[0], /瓜：上次的问题/)
-  assert.match(wakes[0], /你：我上次的回答/)
-  assert.match(wakes[0], /不要失忆/)
+  assert.equal(deps.sent.length, 1, '应只透传一次')
+  assert.match(deps.sent[0].text, /第一条/)
+  assert.match(deps.sent[0].text, /第二条/)
+  assert.equal(deps.watched.length, 1, '应启动一次回复监听')
 }, { timeout: 15000 })

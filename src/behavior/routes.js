@@ -4,17 +4,28 @@
 // 会话侧零特权，纪律不可被提示词绕过。
 //
 // 路由：
-//   GET  /status        她的生命体征与 QQ 接收端状态
-//   POST /qq/send       { whale?, to, text }  回复 QQ 私聊/群
+//   GET  /status         她的生命体征与 QQ 接收端状态
+//   POST /qq/send        { whale?, to, text }  回复 QQ 私聊/群
+//   GET  /personas       人设模板清单（设置页下拉用）
+//   GET  /outbox/list    待审草稿清单
+//   POST /outbox/approve { file, approve }  放行（真发）/ 拒绝（留痕）
+//   GET  /peers          她的活跃 QQ 会话（peerKey → 名字/最近消息/最后活跃）
+//   GET  /settings-page  独立管理面板（完整 HTML，同源 fetch 上述 API）
 
 import http from 'node:http'
 import path from 'node:path'
-import { writeFile, mkdir } from 'node:fs/promises'
+import { writeFile, mkdir, readFile, readdir } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
+import { listPersonas } from '../config/persona.js'
+import { settingsPage } from './settings-section.js'
 
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
 const OUTBOX_DIR = path.join(PLUGIN_ROOT, 'data', 'outbox')
 const REPLY_WINDOW_MS = 30 * 60 * 1000 // semi 档：仅允许回复 30 分钟内主动来找过她的人
+const OUTBOX_LIST_LIMIT = 50   // 待审清单最多返回 50 条
+const PEERS_LIMIT = 20         // 会话列表最多 20 个
+const PEERS_PREVIEW_COUNT = 6  // 最多给 6 个私聊会话拉「最近消息预览」（NapCat 历史，best-effort）
+const PEERS_PREVIEW_LEN = 60
 
 function json(res, status, body) {
   res.statusCode = status
