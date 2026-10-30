@@ -287,3 +287,30 @@ test('session：8 秒窗口内的连续消息合为一次透传（不丢消息�
   assert.match(deps.sent[0].text, /第二条/)
   assert.equal(deps.watched.length, 1, '应启动一次回复监听')
 }, { timeout: 15000 })
+
+// ---------- 贴纸系统 ----------
+
+test('stickers：解析 [贴纸:xxx] 引用并生成图片段', async () => {
+  const { parseStickers, buildMessageSegments, stickerCatalogPreview } = await import('../src/platforms/qq/stickers.js')
+  const raw = '哈哈太好笑了 [贴纸:开心] 你看看这个'
+  const { text, stickers } = parseStickers(raw)
+  assert.equal(text, '哈哈太好笑了 你看看这个')
+  assert.equal(stickers.length, 1)
+  assert.equal(stickers[0].name, '开心')
+  assert.ok(stickers[0].file.includes('celebrate'), `应映射到 celebrate 立绘：${stickers[0].file}`)
+
+  const segments = buildMessageSegments(text, stickers)
+  assert.equal(segments.length, 2) // 文字 + 图片
+  assert.equal(segments[0].type, 'text')
+  assert.equal(segments[1].type, 'image')
+  assert.ok(segments[1].data.file.startsWith('file:///'))
+
+  // 未知贴纸名不影响原文
+  const raw2 = '这是 [贴纸:不存在的] 测试'
+  const r2 = parseStickers(raw2)
+  assert.equal(r2.stickers.length, 0)
+  assert.equal(r2.text, raw2) // 原文保留
+
+  // 目录预览非空
+  assert.ok(stickerCatalogPreview().includes('[贴纸:'))
+})

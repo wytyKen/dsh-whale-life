@@ -1,6 +1,8 @@
 // 回复捕获器：监听模型回复完成，提取文本，从 QQ 发回。
 // 模型不需要运行任何命令——它只是"说话"，插件替它"送话"。
 
+import { parseStickers, buildMessageSegments } from './stickers.js'
+
 const POLL_INTERVAL_MS = 2000
 const POLL_TIMEOUT_MS = 120_000 // 最多等 2 分钟
 
@@ -55,18 +57,30 @@ export function createResponder({ api, conversationManager, log = () => {} }) {
         const cleaned = responseText.replace(/^(泠汐|我)\s*[：:]\s*/m, '').trim()
         if (!cleaned) return
 
+        // ── 解析贴纸引用 ─────────────────────────────
+        const { text, stickers } = parseStickers(cleaned)
+
         // ── 从 QQ 发回 ──────────────────────────────
-        log(`回复就绪（${peerKey}）：${cleaned.slice(0, 60)}…`)
+        log(`回复就绪（${peerKey}）：${text.slice(0, 60)}${stickers.length ? ` + ${stickers.length}张贴纸` : ''}…`)
         try {
           const isGroup = String(peerKey).startsWith('group:')
           const peer = isGroup ? String(peerKey).slice(6) : peerKey
-          const r = isGroup
-            ? await api.sendGroup(peer, cleaned)
-            : await api.sendPrivate(peer, cleaned)
-          log(`已送达 → ${peerKey}（messageId=${r?.message_id}）`)
+          let r
+          if (stickers.length > 0) {
+            // 混合消息（文字+图片）
+            const segments = buildMessageSegments(text, stickers)
+            r = isGroup
+              ? await api.sendGroupSegments(peer, segments)
+              : await api.sendPrivateSegments(peer, segments)
+          } else {
+            r = isGroup
+              ? await api.sendGroup(peer, text)
+              : await api.sendPrivate(peer, text)
+          }
+          log(`已送达 → ${peerKey}（messageId=${r?.message_id}${stickers.length ? `，含${stickers.map(s=>s.name).join('/')}` : ''}）`)
 
-          // 记入共享记忆（谁说了什么、她回了什么）
-          await conversationManager.saveMemory('chat', `回复了 ${peerKey}：${cleaned.slice(0, 100)}`)
+          // 记入记忆
+          await conversationManager.saveMemory('chat', `回复了 ${peerKey}：${text.slice(0, 100)}${stickers.length ? ` [${stickers.map(s=>s.name).join(',')}]` : ''}`)
         } catch (e) {
           log(`QQ 发送失败（${peerKey}）：${e.message}`)
         }

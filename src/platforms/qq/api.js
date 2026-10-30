@@ -62,6 +62,14 @@ export function createQQApi({ config, fetch: fetcher = globalThis.fetch, now = D
     sendGroup(groupId, text) {
       return send('send_group_msg', { group_id: normalizeId(groupId), message: text })
     },
+    /** 私聊发送混合消息（文字+图片贴纸段） */
+    sendPrivateSegments(userId, segments) {
+      return send('send_private_msg', { user_id: normalizeId(userId), message: segments })
+    },
+    /** 群发送混合消息 */
+    sendGroupSegments(groupId, segments) {
+      return send('send_group_msg', { group_id: normalizeId(groupId), message: segments })
+    },
     getLoginInfo() {
       return call(config, 'get_login_info', {}, { fetch: fetcher })
     },

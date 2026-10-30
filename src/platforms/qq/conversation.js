@@ -8,6 +8,7 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises'
 import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { recallContext, recordFact } from '../../memory/store.js'
+import { stickerCatalogPreview } from './stickers.js'
 
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
 const PROJCACHE_DIR = path.join(PLUGIN_ROOT, 'dsh-home', 'storages', 'session_projcache', 'sessions')
@@ -75,6 +76,10 @@ export function createConversationManager({ controller, whaleHome, workspaceId, 
     lines.push('')
     lines.push('【你的记忆】你同时跟多个人在QQ上聊天，以下是你的整体记忆：')
     lines.push('_记忆将在下方注入_')
+
+    // 表情包
+    lines.push('')
+    lines.push(stickerCatalogPreview())
 
     // 行为约束（群聊 vs 私聊略有不同）
     lines.push('')
