@@ -101,9 +101,9 @@ export function createNapCatBoot({ root = PLUGIN_ROOT, log = () => {} } = {}) {
       const logFd = fs.openSync(logPath, 'a')
       fs.writeSync(logFd, `\n===== ${new Date().toISOString()} 启动 =====\n`)
       spawn(path.join(info.shellDir, 'NapCatWinBootMain.exe'), args, {
-        cwd: info.shellDir, detached: true, stdio: ['ignore', logFd, logFd], windowsHide: false,
+        cwd: info.shellDir, detached: true, stdio: ['ignore', logFd, logFd], windowsHide: true,
       }).unref()
-      log(`NapCat 启动中（${qqId ? `快速登录 ${qqId}` : '将出二维码'}）——控制台日志 → data/napcat-console.log`)
+      log(`NapCat 启动中（${qqId ? `快速登录 ${qqId}` : '将出二维码'}，无窗口；日志 → data/napcat-console.log，二维码 → 设置页）`)
       return { started: true }
     } catch (e) {
       return { error: `启动失败：${e?.message ?? e}` }
