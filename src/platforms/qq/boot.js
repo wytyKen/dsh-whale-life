@@ -85,6 +85,7 @@ export function createNapCatBoot({ root = PLUGIN_ROOT, log = () => {} } = {}) {
 
   /**
    * 启动 NapCat（快速登录）。已在跑时是 no-op。
+   * 控制台输出（登录流程/错误）追加到 data/napcat-console.log——诊断不再靠猜。
    * @param {string|number} qqId - 快速登录账号；登录态失效时 NapCat 自动落到二维码模式
    */
   async function start(qqId) {
@@ -93,10 +94,16 @@ export function createNapCatBoot({ root = PLUGIN_ROOT, log = () => {} } = {}) {
     if (info.running) return { started: false, reason: 'already-running' }
     const args = qqId ? [String(qqId)] : []
     try {
+      const fs = await import('node:fs')
+      fs.mkdirSync(path.join(root, 'data'), { recursive: true })
+      const logPath = path.join(root, 'data', 'napcat-console.log')
+      // Windows 上 detached 子进程的 stdio 必须是同步打开的整数 fd（流不行）
+      const logFd = fs.openSync(logPath, 'a')
+      fs.writeSync(logFd, `\n===== ${new Date().toISOString()} 启动 =====\n`)
       spawn(path.join(info.shellDir, 'NapCatWinBootMain.exe'), args, {
-        cwd: info.shellDir, detached: true, stdio: 'ignore', windowsHide: false,
+        cwd: info.shellDir, detached: true, stdio: ['ignore', logFd, logFd], windowsHide: false,
       }).unref()
-      log(`NapCat 启动中（${qqId ? `快速登录 ${qqId}` : '将出二维码'}）`)
+      log(`NapCat 启动中（${qqId ? `快速登录 ${qqId}` : '将出二维码'}）——控制台日志 → data/napcat-console.log`)
       return { started: true }
     } catch (e) {
       return { error: `启动失败：${e?.message ?? e}` }
