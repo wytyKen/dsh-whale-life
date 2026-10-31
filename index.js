@@ -12,8 +12,7 @@ import { personaBlock, wakePrompt } from './src/whale/wake.js'
 import { createApprover, modeFromConfig } from './src/behavior/approver.js'
 import { startRouteServer } from './src/behavior/routes.js'
 import { registerSettingsSection } from './src/behavior/settings-section.js'
-import { registerQQ } from './src/platforms/qq/index.js'
-import { runCatchUp } from './src/platforms/qq/catchup.js'
+import { registerDshNative } from './src/platforms/dsh-native/index.js'
 import { actionCatalogPrompt, parseActionBlock, createActionExecutor } from './src/behavior/actions.js'
 import { getProjcacheStats, waitTurnComplete } from './src/whale/projcache.js'
 
@@ -36,13 +35,9 @@ function capabilitiesFor(whale, webPort) {
       `B站登录由主人完成：node "${path.join(PLUGIN_ROOT, 'cli.mjs')}" bili login（扫码，凭据存本地）`,
     )
   }
-  if (has('qq') && webPort) {
-    caps.push(
-      `QQ（被动收听 + 自主回复）：收到私聊或被 @ 时你会被唤醒。回复不需要开终端——用你的 fetch/网页工具 POST http://127.0.0.1:${webPort}/qq/send ，JSON body {"to":"<对方QQ号或group:群号>","text":"<回复内容>"}。审批与频率限制由插件强制：semi 档下你只能回话（对方 30 分钟内来过才能发），不能主动搭讪。`,
-    )
-    // 主动行动（发空间动态等）：她在唤醒回复的末尾写 ```action 块，插件解析→审批→执行
-    caps.push(actionCatalogPrompt())
-  }
+  // 主动行动：她在唤醒回复的末尾写 ```action 块，插件解析→审批→执行（行动集见 actions.js）
+  const actions = actionCatalogPrompt()
+  if (actions) caps.push(actions)
   return caps
 }
 
@@ -56,12 +51,10 @@ export function apply(ctx, config = {}) {
   log(`apply() 已调用（插件模块加载成功）`)
   const result = loadConfig(config)
   let ticker = null
-  const qqReceivers = []
-  const qqRegistry = new Map() // whaleId → { whale, api, recentPeers }
+  const natives = [] // dsh-native 平台实例（内置对话）
   let stopRoutes = null
   let stopSettings = null
   let routePort = null
-  const pendingCatchups = []
 
   // cordis 4.x 没有 'ready' 事件：启动逻辑在 apply 内直接跑，清理走 ctx.effect
   const bootstrap = async () => {
@@ -116,35 +109,31 @@ export function apply(ctx, config = {}) {
         }),
       })
       log(vitalsLine(whale, persona.value))
-      // QQ 平台：装配会话管理器 + 回复捕获器 + 接收端（NapCat 反向 WS）
-      if (whale.accounts.some((a) => a.platform === 'qq')) {
+      // 内置对话平台：她的工作区里用户开的新会话 = 和她的一个对话框
+      if (whale.platforms?.dsh !== false) {
         const last = whales[whales.length - 1]
-        const recentPeers = new Map()
-        const qq = await registerQQ({
-          whale, home, controller, workspaceId,
-          persona: persona.value, recentPeers, log,
+        const native = registerDshNative({
+          whale, home, ctx, workspaceId,
+          persona: persona.value,
+          bridge: last.bridge,
+          log,
         })
-        if (qq) {
-          last.qq = qq
-          qqReceivers.push(qq)
-          qqRegistry.set(whale.id, { whale, api: qq.api, selfId: qq.selfId, state: qq.state, recentPeers, peersFile: qq.peersFile })
+        if (native) {
+          last.native = native
+          natives.push(native)
         }
       }
     }
 
-    // 行动路由：插件自有的独立 HTTP 服务器（审批/节流/留痕在插件进程内强制）
-    const getQQByWhale = (whaleId) => (whaleId ? qqRegistry.get(whaleId) : [...qqRegistry.values()][0] ?? null)
+    // 行动路由：插件自有的独立 HTTP 服务器（审批/留痕在插件进程内强制）
     const routes = await startRouteServer({
       port: Number(config.routePort ?? 3939),
-      getQQ: getQQByWhale,
-      // 会话列表用：枚举全部已就绪的 QQ 平台（/peers）
-      getAllQQ: () => [...qqRegistry.values()],
       getStatus: () => ({
         whales: whales.map((w) => ({
           id: w.whale.id,
           persona: w.persona.name,
           approvalMode: w.whale.approvalMode,
-          qq: w.qq ? w.qq.state() : null,
+          native: w.native ? w.native.state() : null,
         })),
         // 心跳：ticker 在路由启动之后才创建，闭包在请求时读取即得最新状态
         ticker: { running: ticker?.running ?? false },
@@ -154,8 +143,13 @@ export function apply(ctx, config = {}) {
     stopRoutes = routes.stop
     routePort = routes.port
 
-    // 行动执行器：她的 ```action 意图 → 审批 → NapCat 执行（发动态等），留痕 outbox
-    const actionExecutor = createActionExecutor({ getQQ: getQQByWhale, log })
+    // 行动执行器骨架：她的 ```action 意图 → 审批 →（平台注册的）执行通道，留痕 outbox。
+    // 当前无对外平台——行动集为空，审批/解析/留痕骨架就绪，等平台回来。
+    const whaleById = new Map(whales.map((w) => [w.whale.id, w]))
+    const actionExecutor = createActionExecutor({
+      getApprovalMode: (id) => whaleById.get(id)?.whale.approvalMode ?? 'semi',
+      log,
+    })
 
     // 唤醒回复落地：等她写完 → 独白进日记 → 行动块解析执行
     async function watchWakeReply(w, baselineTurns) {
@@ -196,15 +190,6 @@ export function apply(ctx, config = {}) {
       log(`设置页区块注入失败（独立页面仍可用）：${e.message}`)
     }
 
-    // 离线补收：路由就绪后，把睡着期间错过的私聊补给她
-    for (const cu of pendingCatchups) {
-      try {
-        const woken = await runCatchUp({ ...cu, routePort, log })
-        if (woken) log(`离线补收完成：唤醒 ${woken} 个会话补看错过的消息`)
-      } catch (e) {
-        log(`离线补收失败（不影响其他功能）：${e.message}`)
-      }
-    }
     if (!controller) {
       log('⚠ sessionController 缺失：心跳照常，但无法唤醒会话')
     }
@@ -256,7 +241,7 @@ export function apply(ctx, config = {}) {
   ctx.effect(() => () => {
     stopSettings?.()
     stopRoutes?.()
-    for (const qq of qqReceivers) qq.stop()
+    for (const n of natives) n.stop()
     ticker?.stop()
     log('DSH 关闭，鲸生沉睡。')
   })

@@ -4,32 +4,60 @@
   "description": "Whale Life 鲸生 —— 让 DeepSeek 鲸鱼娘在 DSH 中过自己的网络人生",
   "type": "module",
   "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client/client.js",
+    "./package.json": "./package.json"
+  },
   "files": [
     "index.js",
+    "client/**/*",
     "cli.mjs",
     "cordis.patch.yml",
     "src/**/*",
-    "personas/**/*"
+    "personas/**/*",
+    "scripts/*.mjs",
+    "docs/*.md"
   ],
   "scripts": {
-    "test": "node --test test/config.test.js test/behavior.test.js test/bilibili.test.js test/qq.test.js test/boot.test.js test/routes.test.js test/actions.test.js"
+    "test": "node --test test/config.test.js test/behavior.test.js test/bilibili.test.js test/routes.test.js test/actions.test.js"
   },
   "keywords": [
     "dsh",
     "dsh-plugin",
     "deepseek-harness",
     "deepseek",
-    "cordis"
+    "cordis",
+    "qq",
+    "ai-companion",
+    "whale"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wytyKen/dsh-whale-life.git"
+  },
+  "bugs": {
+    "url": "https://github.com/wytyKen/dsh-whale-life/issues"
+  },
+  "homepage": "https://github.com/wytyKen/dsh-whale-life#readme",
+  "engines": {
+    "node": ">=20"
+  },
   "license": "MIT",
   "dependencies": {
     "qrcode": "^1.5.4",
     "yaml": "^2.6.0",
     "ws": "^8.18.0"
   },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "~4.0.5"
+  },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web"
     }
   }
 }

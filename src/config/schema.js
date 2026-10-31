@@ -47,20 +47,12 @@ function validateSource(source, i) {
   return errors
 }
 
-// 每鲸独立的平台连接配置：platforms.qq 可以是 true（用全局连接）或对象（覆盖字段）。
-// 多鲸生时每只鲸有自己的 QQ 号 / 端口 / NapCat——互不串线。
-const QQ_PLATFORM_KEYS = ['selfId', 'httpBase', 'wsPort', 'autoBoot']
-function validateQQPlatform(qq, prefix) {
+// 每鲸的平台开关：platforms.dsh = 内置对话（DSH 工作区里的会话即对话框）。
+// 对外平台（QQ 等）回归时在 platforms 下恢复相应键。
+function validatePlatforms(platforms, prefix) {
   const errors = []
-  if (qq === true) return errors
-  if (!isObj(qq)) return [`${prefix} 必须是 true 或对象`]
-  for (const key of QQ_PLATFORM_KEYS) {
-    const v = qq[key]
-    if (v === undefined) continue
-    if (key === 'autoBoot' && typeof v !== 'boolean') errors.push(`${prefix}.${key} 必须是布尔值`)
-    if (key === 'selfId' && !(typeof v === 'string' || Number.isFinite(Number(v)))) errors.push(`${prefix}.${key} 必须是 QQ 号`)
-    if (key === 'wsPort' && !Number.isInteger(Number(v))) errors.push(`${prefix}.${key} 必须是端口号`)
-    if (key === 'httpBase' && !isStr(v)) errors.push(`${prefix}.${key} 必须是字符串（如 http://127.0.0.1:3000）`)
+  if (platforms.dsh !== undefined && typeof platforms.dsh !== 'boolean') {
+    errors.push(`${prefix}.dsh 必须是布尔值（内置对话开关）`)
   }
   return errors
 }
@@ -86,7 +78,7 @@ export function validateWhale(raw, index) {
     else whale.accounts.forEach((a, i) => errors.push(...validateAccount(a, i)))
   }
   if (whale.platforms !== undefined && !isObj(whale.platforms)) errors.push(`${prefix}.platforms 必须是对象`)
-  if (whale.platforms?.qq != null) errors.push(...validateQQPlatform(whale.platforms.qq, `${prefix}.platforms.qq`))
+  if (whale.platforms) errors.push(...validatePlatforms(whale.platforms, `${prefix}.platforms`))
   if (whale.permissions !== undefined && !isObj(whale.permissions)) errors.push(`${prefix}.permissions 必须是对象`)
   if (whale.socialBounds !== undefined && !isObj(whale.socialBounds)) errors.push(`${prefix}.socialBounds 必须是对象`)
   whale.approvalMode = whale.approvalMode ?? 'semi'
@@ -132,17 +124,11 @@ export function validateWhale(raw, index) {
 
 // 填充单只鲸鱼的默认值（在结构校验通过后调用）
 export function withDefaults(whale) {
-  const qq = whale.platforms?.qq
   return {
     id: whale.id,
     platforms: {
-      // qq: null = 未接入；{} = 接入但全部用全局连接配置；对象字段 = 覆盖全局
-      qq: qq === undefined || qq === null ? null : (qq === true ? {} : {
-        ...(qq.selfId !== undefined ? { selfId: String(qq.selfId) } : {}),
-        ...(qq.httpBase !== undefined ? { httpBase: qq.httpBase } : {}),
-        ...(qq.wsPort !== undefined ? { wsPort: Number(qq.wsPort) } : {}),
-        ...(qq.autoBoot !== undefined ? { autoBoot: qq.autoBoot } : {}),
-      }),
+      // 内置对话（DSH 工作区会话 = 对话框）默认开启
+      dsh: whale.platforms?.dsh ?? true,
     },
     persona: whale.persona ?? {},
     identity: {

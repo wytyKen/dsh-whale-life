@@ -10,7 +10,7 @@
 //   ② 独立页面：  GET http://127.0.0.1:3939/settings-page（行动路由服务器，完整页面）
 //      —— 片段头部有链接指向它；webServer 不可用时设置面板仍有完整入口。
 //
-// 卡片：生命体征（/status）· 好友对话（/peers）· 待审草稿（/outbox/list + /outbox/approve）
+// 卡片：生命体征（/status，每鲸卡片内含对话列表）· 待审草稿（/outbox/list + /outbox/approve）· 人设模板（/personas）
 //        · 人设模板（/personas，选中即预览）
 //
 // CSS 类名全部 wl- 前缀（对应 bili-whale 的 blw- 模式），避免与宿主样式冲突；
@@ -63,9 +63,6 @@ const CSS = [
   '.wl-msg{font-size:12px;line-height:18px;min-height:0;margin:6px 0 0}',
   '.wl-msg-ok{color:#2e9e5b}',
   '.wl-msg-err{color:var(--dsw-alias-state-error-primary,#d93026)}',
-  '.wl-qr{margin:10px auto 2px;width:min(220px,80%);background:#fff;border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.28));border-radius:10px;padding:10px;text-align:center}',
-  '.wl-qr img{width:100%;height:auto;display:block;image-rendering:pixelated}',
-  '.wl-qr-hint{font-size:11px;color:#6b7280;margin-top:6px}',
 ].join('')
 
 // ── 静态骨架（数据位留空，全部由前端 fetch 填充）────────────────────────────
@@ -76,17 +73,13 @@ function markup({ pageUrl }) {
   return [
     '<div class="wl-head">',
     '  <h3 class="wl-title">🐋 鲸生</h3>',
-    '  <p class="wl-intro">她的生命体征、QQ 会话、待审草稿与人设模板。数据来自行动路由服务器（127.0.0.1），每 30 秒自动刷新。</p>',
+    '  <p class="wl-intro">她的生命体征、对话、待审草稿与人设模板。数据来自行动路由服务器（127.0.0.1），每 30 秒自动刷新。</p>',
     `  ${openLink}`,
     '</div>',
     '<div class="wl-grid">',
     '  <section class="wl-card">',
     '    <div class="wl-card-head"><span class="wl-card-title">生命体征</span><span class="wl-badge" data-wl="alive">…</span></div>',
     '    <div data-wl="status"><div class="wl-hint">读取中…</div></div>',
-    '  </section>',
-    '  <section class="wl-card">',
-    '    <div class="wl-card-head"><span class="wl-card-title">好友对话</span><span class="wl-badge" data-wl="peers-count"></span></div>',
-    '    <div data-wl="peers"><div class="wl-hint">读取中…</div></div>',
     '  </section>',
     '  <section class="wl-card">',
     '    <div class="wl-card-head"><span class="wl-card-title">待审草稿（Outbox）</span><span class="wl-badge" data-wl="draft-count"></span></div>',
@@ -149,14 +142,6 @@ function script({ apiBase }) {
     }
 
     var APPROVAL = { auto: '全自主', semi: '高危请示', 'dry-run': '试运行' };
-    var QQ_STATE = {
-      init: ['初始化…', ''],
-      listening: ['监听中 · 等 NapCat 接入', 'wl-badge-warn'],
-      online: ['在线', 'wl-badge-ok'],
-      degraded: ['降级（90s 无数据帧）', 'wl-badge-warn'],
-      offline: ['离线', 'wl-badge-bad'],
-      failed: ['失败', 'wl-badge-bad'],
-    };
 
     // ── 卡片 1：每只鲸鱼一个卡片 ────────────────────
     function renderStatus(j) {
@@ -173,18 +158,28 @@ function script({ apiBase }) {
       if (!whales.length) { box.innerHTML = hint('还没有配置任何鲸鱼'); return; }
       var cards = [];
       whales.forEach(function (w) {
-        var st = w.qq && QQ_STATE[w.qq.receiver] ? QQ_STATE[w.qq.receiver] : null;
-        var qqLine = w.qq ? (st ? badge(st[1], st[0]) : '未知') : '未接入';
+        var native = w.native;
+        var sessions = (native && native.sessions) || [];
+        var aliveBadge = sessions.length
+          ? badge('wl-badge-ok', '对话中 · ' + sessions.length + ' 个')
+          : badge('', '待对话');
+        var sessionList = sessions.length
+          ? '<div style="margin-top:8px">' + sessions.slice(0, 5).map(function (s) {
+              return '<div class="wl-item"><div class="wl-item-main">' +
+                '<div class="wl-item-title">' + esc(s.title || ('会话 ' + String(s.id || '').slice(0, 8))) + badge('', s.turns + ' 轮') + '</div>' +
+              '</div><div class="wl-item-side"><span>' + esc(ago(s.lastAt)) + '</span></div></div>';
+            }).join('') + '</div>'
+          : hint('在她的工作区里开一个新会话，就是和她聊天的第一个对话框。');
         cards.push(
           '<div class="wl-card">' +
-            '<div class="wl-card-head"><span class="wl-card-title">🐋 ' + esc(w.persona || w.id) + '</span>' + qqLine + '</div>' +
+            '<div class="wl-card-head"><span class="wl-card-title">🐋 ' + esc(w.persona || w.id) + '</span>' + aliveBadge + '</div>' +
             '<dl class="wl-kv">' +
               '<dt>ID</dt><dd>#' + esc(w.id) + '</dd>' +
               '<dt>审批档</dt><dd>' + esc(APPROVAL[w.approvalMode] || w.approvalMode) + '</dd>' +
               '<dt>记忆</dt><dd><label style="cursor:pointer"><input type="checkbox" checked onchange="this.nextElementSibling.textContent=this.checked?&#39;开启&#39;:&#39;关闭&#39;"> <span>开启</span></label> <span class="wl-hint">（所有会话共用）</span></dd>' +
               '<dt>心跳</dt><dd>' + (j.ticker && j.ticker.running ? '运行中 ✓' : '停止') + '</dd>' +
             '</dl>' +
-            (w.qq ? '<div data-wl-napcat="' + esc(w.id) + '"><div class="wl-hint">QQ 接入状态读取中…</div></div>' : '') +
+            sessionList +
           '</div>');
       });
       // 假的添加按钮（后续实现多鲸生管理）
@@ -194,136 +189,9 @@ function script({ apiBase }) {
           '<div class="wl-hint">添加鲸生</div>' +
         '</div>');
       box.innerHTML = cards.join('');
-      // 记录接入 QQ 的鲸 → 拉各自的 NapCat 状态填充卡片子区
-      qqWhaleIds = whales.filter(function (w) { return !!w.qq; }).map(function (w) { return w.id; });
-      refreshNapcat();
     }
 
-    // ── 每鲸卡片内：QQ 接入（NapCat 控制台）─────────
-    // 登录三态：🟢 在线（该鲸的 WS 已连）/ 🟡 等待登录（显示内嵌二维码）/ ⚪ 未启动。
-    // 每只鲸的 QQ 独立（自己的号、自己的二维码、自己的开关）——卡片自包含。
-    var napcatFastTimer = null;
-    var qqWhaleIds = []; // 最近一次 /status 里接入 QQ 的鲸 id
-    function napcatPhase(j) {
-      if (!j || !j.ok) return { key: 'err', badge: ['', '未知'], needFast: true }
-      if (!j.installed) return { key: 'no-install', badge: ['wl-badge-bad', '未安装'], needFast: false }
-      if (j.wsState === 'online') return { key: 'online', badge: ['wl-badge-ok', '在线'], needFast: false }
-      if (j.running) return { key: 'waiting', badge: ['wl-badge-warn', '等待登录'], needFast: true }
-      return { key: 'stopped', badge: ['', '未启动'], needFast: true }
-    }
-    function fillNapcat(whaleId, j) {
-      var box = root.querySelector('[data-wl-napcat="' + whaleId + '"]');
-      if (!box) return;
-      var ph = napcatPhase(j);
-      if (ph.key === 'err') { box.innerHTML = '<div class="wl-err">' + esc((j && j.error) || '无法读取 /qq/napcat') + '</div>'; return; }
-      var html = '<div style="display:flex;align-items:center;gap:8px;margin-top:10px">'
-        + '<span class="wl-badge ' + ph.badge[0] + '">' + esc(ph.badge[1]) + '</span>'
-        + (j.selfId ? '<span class="wl-hint">QQ ' + esc(String(j.selfId)) + '</span>' : '')
-        + '</div>';
-      if (ph.key === 'no-install') {
-        box.innerHTML = hint('未找到 NapCat 安装（tools/napcat/onekey/）。请先运行 scripts/qq-setup.mjs 完成接入。');
-        return;
-      }
-      if (ph.key === 'online') {
-        html += hint('QQ 已连接 ✓ 她在网上了（会话/动态/行动能力可用）。');
-      } else if (ph.key === 'waiting') {
-        var qr = j.qr || {};
-        if (qr.available) {
-          var staleTip = qr.stale ? ' <b style="color:var(--dsw-alias-state-error-primary,#d93026)">二维码可能已过期，请点击刷新</b>' : '';
-          html += '<div class="wl-qr"><img alt="QQ 登录二维码" src="' + API + '/qq/qrcode?t=' + Number(qr.mtimeMs || 0) + '">'
-            + '<div class="wl-qr-hint">用她的手机 QQ 扫码登录' + staleTip + '</div></div>';
-        } else {
-          html += hint('NapCat 已启动，等待登录二维码生成…（若长时间无码请点刷新）');
-        }
-        html += '<div class="wl-btns" style="margin-top:8px"><button type="button" class="wl-btn wl-btn2" data-wl-act="napcat-restart" data-whale="' + esc(whaleId) + '">刷新二维码</button></div>';
-      } else {
-        html += hint('NapCat 未启动。点击启动（登录态有效时自动快速登录，无需扫码）。');
-        html += '<div class="wl-btns" style="margin-top:8px"><button type="button" class="wl-btn" data-wl-act="napcat-start" data-whale="' + esc(whaleId) + '">启动 NapCat</button></div>';
-      }
-      html += '<div style="margin-top:10px"><label style="cursor:pointer;font-size:12px"><input type="checkbox" data-wl-act="napcat-autoboot" data-whale="' + esc(whaleId) + '"'
-        + (j.autoBoot ? ' checked' : '') + '> DSH 启动时自动拉起</label></div>';
-      html += '<div class="wl-msg" data-wl="napcat-msg-' + esc(whaleId) + '"></div>';
-      box.innerHTML = html;
-    }
-    function refreshNapcat() {
-      if (!qqWhaleIds.length) return Promise.resolve();
-      var needFast = false;
-      return Promise.all(qqWhaleIds.map(function (id) {
-        return get('/qq/napcat?whale=' + encodeURIComponent(id)).then(function (j) {
-          fillNapcat(id, j);
-          if (napcatPhase(j).needFast) needFast = true;
-        }).catch(function () {});
-      })).then(function () { scheduleNapcatPoll(needFast); });
-    }
-    // 注：refreshAll 不再单独调 refreshNapcat——renderStatus 渲染完卡片（子区容器存在）后自动触发。
-    // 事件委托挂在 root：鲸卡 innerXML 会随刷新重建，容器级监听不丢事件
-    root.addEventListener('click', function (ev) {
-      var btn = ev.target && ev.target.closest ? ev.target.closest('[data-wl-act]') : null;
-      if (!btn || btn.tagName !== 'BUTTON') return;
-      var act = btn.getAttribute('data-wl-act');
-      if (act !== 'napcat-start' && act !== 'napcat-restart') return;
-      var whaleId = btn.getAttribute('data-whale') || '';
-      var msg = root.querySelector('[data-wl="napcat-msg-' + whaleId + '"]');
-      btn.disabled = true;
-      if (msg) { msg.textContent = act === 'napcat-restart' ? '正在重启登录（拿新二维码）…' : '启动中…'; msg.className = 'wl-msg'; }
-      post((act === 'napcat-restart' ? '/qq/napcat/restart' : '/qq/napcat/start') + (whaleId ? '?whale=' + encodeURIComponent(whaleId) : ''), {})
-        .then(function (j2) {
-          if (msg) {
-            msg.textContent = j2 && j2.ok ? '✓ 已发出（等十几秒后状态自动更新）' : '✗ ' + ((j2 && j2.error) || '失败');
-            msg.className = 'wl-msg ' + (j2 && j2.ok ? 'wl-msg-ok' : 'wl-msg-err');
-          }
-          refreshNapcat();
-        }).catch(function (e) {
-          if (msg) { msg.textContent = '✗ ' + (e && e.message ? e.message : e); msg.className = 'wl-msg wl-msg-err'; }
-          btn.disabled = false;
-        });
-    });
-    root.addEventListener('change', function (ev) {
-      var cb = ev.target;
-      if (!cb || cb.getAttribute('data-wl-act') !== 'napcat-autoboot') return;
-      var whaleId = cb.getAttribute('data-whale') || '';
-      var msg = root.querySelector('[data-wl="napcat-msg-' + whaleId + '"]');
-      if (msg) { msg.textContent = '保存中…'; msg.className = 'wl-msg'; }
-      post('/qq/autoboot', { enabled: cb.checked }).then(function (j2) {
-        if (msg) {
-          msg.textContent = j2 && j2.ok ? (cb.checked ? '✓ 已开启自动拉起' : '✓ 已关闭自动拉起') : '✗ ' + ((j2 && j2.error) || '失败');
-          msg.className = 'wl-msg ' + (j2 && j2.ok ? 'wl-msg-ok' : 'wl-msg-err');
-        }
-      }).catch(function (e) {
-        if (msg) { msg.textContent = '✗ ' + (e && e.message ? e.message : e); msg.className = 'wl-msg wl-msg-err'; }
-      });
-    });
-    function scheduleNapcatPoll(need) {
-      if (need && !napcatFastTimer) {
-        napcatFastTimer = setInterval(function () { if (!document.hidden) refreshNapcat(); }, 5000);
-      } else if (!need && napcatFastTimer) {
-        clearInterval(napcatFastTimer);
-        napcatFastTimer = null;
-      }
-    }
-
-    // ── 卡片 3：好友对话 ─────────────────────────────
-    function renderPeers(j) {
-      var box = $('peers');
-      var count = $('peers-count');
-      if (!box) return;
-      if (!j || !j.ok) { box.innerHTML = '<div class="wl-err">' + esc((j && j.error) || '无法读取 /peers') + '</div>'; if (count) count.textContent = ''; return; }
-      var peers = j.peers || [];
-      if (count) count.textContent = peers.length ? peers.length + ' 个会话' : '';
-      if (!peers.length) { box.innerHTML = hint('还没有活跃会话（有人找她以后会出现在这里）'); return; }
-      box.innerHTML = peers.map(function (p) {
-        var isGroup = String(p.key || '').indexOf('group:') === 0;
-        return '<div class="wl-item">' +
-          '<div class="wl-item-main">' +
-            '<div class="wl-item-title">' + esc(p.name || p.key) + badge('', isGroup ? '群' : '私聊') + '</div>' +
-            '<div class="wl-item-sub">' + esc(p.recentMessage || '（暂无消息预览）') + '</div>' +
-          '</div>' +
-          '<div class="wl-item-side"><span>' + esc(ago(p.lastAt)) + '</span><span class="wl-hint">' + esc(p.key) + '</span></div>' +
-        '</div>';
-      }).join('');
-    }
-
-    // ── 卡片 3：待审草稿（放行 / 拒绝）────────────────
+    // ── 卡片 2：待审草稿（放行 / 拒绝）────────────────
     function renderOutbox(j) {
       var box = $('outbox');
       var count = $('draft-count');
@@ -411,12 +279,11 @@ function script({ apiBase }) {
     // ── 拉取（各卡片互不拖累）+ 30s 轮询 ─────────────
     // refreshNapcat 已在上方（每鲸版）：renderStatus 渲染卡片后自动触发。
     function refreshStatus() { get('/status').then(renderStatus).catch(function (e) { renderStatus({ ok: false, error: e && e.message }); }); }
-    function refreshPeers() { get('/peers').then(renderPeers).catch(function (e) { renderPeers({ ok: false, error: e && e.message }); }); }
     function refreshOutbox() { get('/outbox/list').then(renderOutbox).catch(function (e) { renderOutbox({ ok: false, error: e && e.message }); }); }
     function refreshPersonas() { get('/personas').then(renderPersonas).catch(function (e) { renderPersonas({ ok: false, error: e && e.message }); }); }
     function refreshAll() {
       if (document.hidden) return;
-      refreshStatus(); refreshPeers(); refreshOutbox(); refreshPersonas();
+      refreshStatus(); refreshOutbox(); refreshPersonas();
     }
     refreshAll();
     root.__wlTimer = setInterval(refreshAll, 30000);
@@ -446,6 +313,27 @@ export function settingsFragment({ apiBase = '', pageUrl = '' } = {}) {
     `<script>\n${script({ apiBase })}\n</script>`,
     '</div>',
   ].join('\n')
+}
+
+/**
+ * 面板骨架（无 script）——DSH Web 设置 tab 的 client 桥拉取用（GET /whale-life/settings-body）。
+ * 独立于 settingsFragment：tab 内嵌时不带「独立页面打开」链接。
+ */
+export function settingsPanelBody() {
+  return [
+    '<div class="wl-root" data-wl-root="1">',
+    `<style>\n${CSS}\n</style>`,
+    markup({ pageUrl: '' }),
+    '</div>',
+  ].join('\n')
+}
+
+/**
+ * 面板逻辑源码（GET /whale-life/settings.js）——client 桥以 <script src> 注入执行。
+ * apiBase 必须是行动路由的绝对 origin（tab 在 DSH Web 源下，API 跨源到 3939）。
+ */
+export function settingsPanelScript(apiBase) {
+  return script({ apiBase })
 }
 
 /**
@@ -506,8 +394,11 @@ export function registerSettingsSection({ ctx, log = () => {}, port = DEFAULT_RO
   }
 
   const routes = [
-    { kind: 'get', path: '/whale-life/settings', body: fragment },
-    { kind: 'get', path: '/whale-life/settings-page', body: page },
+    { kind: 'get', path: '/whale-life/settings', body: fragment, type: 'html' },
+    { kind: 'get', path: '/whale-life/settings-page', body: page, type: 'html' },
+    // client 桥（client/client.js）拉取的两件套：tab 骨架 + 面板逻辑
+    { kind: 'get', path: '/whale-life/settings-body', body: settingsPanelBody(), type: 'html' },
+    { kind: 'get', path: '/whale-life/settings.js', body: settingsPanelScript(apiBase), type: 'js' },
   ]
   for (const r of routes) {
     try {
@@ -520,7 +411,14 @@ export function registerSettingsSection({ ctx, log = () => {}, port = DEFAULT_RO
             res.end()
             return
           }
-          html(res, r.body)
+          if (r.type === 'js') {
+            res.statusCode = 200
+            res.setHeader('content-type', 'application/javascript; charset=utf-8')
+            res.setHeader('cache-control', 'no-store')
+            res.end(r.body)
+          } else {
+            html(res, r.body)
+          }
         },
       }))
       log(`设置页路由已挂载：${r.path}（API → ${apiBase}）`)

@@ -28,9 +28,11 @@
 
             # ================= 账号与边界：她能碰什么 =================
             accounts:
-              - platform: bilibili      # 平台适配器（第一梯队：bilibili / qq）
+              - platform: bilibili      # 平台适配器（当前：bilibili 只读）
                 credentials: secrets/bilibili.json  # 凭据文件，相对插件 data/ 目录（git 忽略）
                 allowRegister: false    # 是否允许她自己注册新账号
+            platforms:
+              dsh: true                 # 内置对话（她的工作区里开会话=聊天），默认开
             permissions:
               allow: [post, reply, chat, follow]
               deny: [delete-account, payment]

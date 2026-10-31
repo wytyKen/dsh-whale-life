@@ -1,26 +1,34 @@
-// 行动层：审批裁决（纯函数）、action 块解析、执行器（假 QQ）。
-// 以及 schema 的 per-whale QQ 平台配置校验。
+// 行动层骨架：审批裁决（纯函数）、action 块解析、执行器（无执行通道时的行为）。
+// 以及 schema 的 platforms.dsh 校验。
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { decideAction, parseActionBlock, createActionExecutor, ACTION_CATALOG } from '../src/behavior/actions.js'
+import { decideAction, parseActionBlock, createActionExecutor, actionCatalogPrompt, ACTION_CATALOG } from '../src/behavior/actions.js'
 import { loadConfig } from '../src/config/schema.js'
 
-// ---------- 审批裁决 ----------
+// ---------- 审批裁决（骨架态） ----------
 
-test('decideAction：只读免审；写操作按审批档；白名单外一律草稿', () => {
-  assert.deepEqual(decideAction({ op: 'qzone.read', approvalMode: 'dry-run' }), { execute: true, reason: '只读行动免审' })
-  assert.equal(decideAction({ op: 'qzone.publish', approvalMode: 'dry-run' }).execute, false)
-  assert.equal(decideAction({ op: 'qzone.publish', approvalMode: 'auto' }).execute, true)
-  const semi = decideAction({ op: 'qzone.publish', approvalMode: 'semi' })
-  assert.equal(semi.execute, false)
-  assert.match(semi.reason, /草稿/)
-  const unknown = decideAction({ op: 'set_group_kick', approvalMode: 'auto' })
-  assert.equal(unknown.execute, false)
-  assert.match(unknown.reason, /白名单/)
+test('decideAction：空目录下一切 op 都不在白名单 → 草稿；纪律不随平台消失', () => {
+  const d = decideAction({ op: 'anything.publish', approvalMode: 'auto' })
+  assert.equal(d.execute, false)
+  assert.match(d.reason, /白名单/)
+})
+
+test('decideAction：read/write 分级与审批档逻辑（用临时登记的目录项验证）', () => {
+  // 直接验证逻辑分支：向目录压入临时项（测试内还原）
+  ACTION_CATALOG.push({ op: 'test.read', kind: 'read', desc: '', params: '' })
+  ACTION_CATALOG.push({ op: 'test.write', kind: 'write', desc: '', params: '' })
+  try {
+    assert.equal(decideAction({ op: 'test.read', approvalMode: 'dry-run' }).execute, true)
+    assert.equal(decideAction({ op: 'test.write', approvalMode: 'dry-run' }).execute, false)
+    assert.equal(decideAction({ op: 'test.write', approvalMode: 'auto' }).execute, true)
+    assert.match(decideAction({ op: 'test.write', approvalMode: 'semi' }).reason, /草稿/)
+  } finally {
+    ACTION_CATALOG.length = 0
+  }
 })
 
 // ---------- action 块解析 ----------
@@ -42,83 +50,35 @@ test('parseActionBlock：提取合法项，坏 JSON 与缺 op 忽略；无块返
   assert.equal(parseActionBlock('没有任何行动的普通回复').length, 0)
 })
 
-// ---------- 执行器 ----------
+// ---------- 执行器（骨架态） ----------
 
-test('executor：semi 下 publish 存草稿；auto 下直发并留痕；QQ 缺席报错', async () => {
+test('executor：无执行通道时白名单外行动一律草稿并落盘', async () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'wl-act-'))
-  const calls = []
-  const fakeQQ = {
-    whale: { id: 'lingxi', approvalMode: 'auto' },
-    api: { call: async (action, params) => { calls.push([action, params]); return { tid: 't123' } } },
-  }
-  const getQQ = (whaleId) => (whaleId === 'lingxi' ? fakeQQ : null)
-  const ex = createActionExecutor({ getQQ, outboxDir: dir, log: () => {} })
-
-  // auto：直发 + 留痕文件
-  const r1 = await ex.execute('lingxi', { op: 'qzone.publish', content: '第一缕晨光。', visibility: 4 })
-  assert.equal(r1.status, 'executed')
-  assert.deepEqual(calls[0], ['send_qzone_msg', { content: '第一缕晨光。', ugc_right: 4 }])
-
-  // semi 鲸：草稿
-  const semiQQ = { ...fakeQQ, whale: { id: 'semi-whale', approvalMode: 'semi' } }
-  const ex2 = createActionExecutor({
-    getQQ: (id) => (id === 'semi-whale' ? semiQQ : id === 'lingxi' ? fakeQQ : null),
-    outboxDir: dir, log: () => {},
-  })
-  const r2 = await ex2.execute('semi-whale', { op: 'qzone.publish', content: '悄悄话' })
-  assert.equal(r2.status, 'drafted')
-
-  // QQ 缺席的鲸：读不到审批档（默认 semi）→ 也是草稿（不执行）
-  const r3 = await ex2.execute('ghost', { op: 'qzone.publish', content: 'x' })
-  assert.equal(r3.status, 'drafted')
-
-  // 留痕文件存在（executed + drafted 各一）
+  const ex = createActionExecutor({ getApprovalMode: () => 'auto', outboxDir: dir, log: () => {} })
+  const r = await ex.execute('lingxi', { op: 'whatever.do', content: 'x' })
+  assert.equal(r.status, 'drafted')
   const files = readdirSync(dir).filter((f) => f.startsWith('act-'))
-  assert.ok(files.length >= 2)
+  assert.equal(files.length, 1)
   rmSync(dir, { recursive: true, force: true })
 })
 
-test('executor：只读 qzone.read 在 dry-run 下也直接执行', async () => {
-  const dir = mkdtempSync(path.join(tmpdir(), 'wl-act-'))
-  const fakeQQ = {
-    whale: { id: 'w', approvalMode: 'dry-run' },
-    api: { call: async () => ({ feeds: [] }) },
-  }
-  const ex = createActionExecutor({ getQQ: () => fakeQQ, outboxDir: dir, log: () => {} })
-  const r = await ex.execute('w', { op: 'qzone.read' })
-  assert.equal(r.status, 'executed')
-  rmSync(dir, { recursive: true, force: true })
+test('actionCatalogPrompt：空目录返回空串（不注入提示）', () => {
+  assert.equal(ACTION_CATALOG.length, 0)
+  assert.equal(actionCatalogPrompt(), '')
 })
 
-// ---------- per-whale QQ 平台配置 ----------
+// ---------- platforms.dsh 校验 ----------
 
-test('schema：platforms.qq 支持 true / 对象；对象字段规范化；非法值报错', () => {
-  const ok1 = loadConfig({ whales: [{ id: 'a', platforms: { qq: true } }] })
+test('schema：platforms.dsh 布尔校验与默认值', () => {
+  const ok1 = loadConfig({ whales: [{ id: 'a' }] })
   assert.equal(ok1.ok, true)
-  assert.deepEqual(ok1.whales[0].platforms.qq, {})
+  assert.equal(ok1.whales[0].platforms.dsh, true)
 
-  const ok2 = loadConfig({ whales: [{ id: 'a', platforms: { qq: { selfId: 12345, wsPort: '3005', autoBoot: false } } }] })
+  const ok2 = loadConfig({ whales: [{ id: 'a', platforms: { dsh: false } }] })
   assert.equal(ok2.ok, true)
-  assert.deepEqual(ok2.whales[0].platforms.qq, { selfId: '12345', wsPort: 3005, autoBoot: false })
+  assert.equal(ok2.whales[0].platforms.dsh, false)
 
-  const ok3 = loadConfig({ whales: [{ id: 'a', platforms: { qq: null } }] })
-  assert.equal(ok3.ok, true)
-  assert.equal(ok3.whales[0].platforms.qq, null)
-
-  const bad = loadConfig({ whales: [{ id: 'a', platforms: { qq: { wsPort: 'abc' } } }] })
+  const bad = loadConfig({ whales: [{ id: 'a', platforms: { dsh: 'yes' } }] })
   assert.equal(bad.ok, false)
-  assert.match(bad.errors.join(';'), /wsPort/)
-
-  const bad2 = loadConfig({ whales: [{ id: 'a', platforms: { qq: 'yes' } }] })
-  assert.equal(bad2.ok, false)
-  assert.match(bad2.errors.join(';'), /true 或对象/)
-})
-
-// ---------- 能力目录完整性 ----------
-
-test('ACTION_CATALOG：每个 op 都在审批白名单内', () => {
-  for (const a of ACTION_CATALOG) {
-    const d = decideAction({ op: a.op, approvalMode: 'auto' })
-    assert.ok(!/白名单/.test(d.reason ?? ''), `${a.op} 应在白名单内：${d.reason}`)
-  }
+  assert.match(bad.errors.join(';'), /dsh/)
 })
