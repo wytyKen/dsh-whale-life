@@ -14,6 +14,8 @@ import { startRouteServer } from './src/behavior/routes.js'
 import { registerSettingsSection } from './src/behavior/settings-section.js'
 import { registerQQ } from './src/platforms/qq/index.js'
 import { runCatchUp } from './src/platforms/qq/catchup.js'
+import { actionCatalogPrompt, parseActionBlock, createActionExecutor } from './src/behavior/actions.js'
+import { getProjcacheStats, waitTurnComplete } from './src/whale/projcache.js'
 
 export const name = 'dsh-whale-life'
 // cordis 4.x：访问服务必须在此声明（注入即必需依赖）。
@@ -38,6 +40,8 @@ function capabilitiesFor(whale, webPort) {
     caps.push(
       `QQ（被动收听 + 自主回复）：收到私聊或被 @ 时你会被唤醒。回复不需要开终端——用你的 fetch/网页工具 POST http://127.0.0.1:${webPort}/qq/send ，JSON body {"to":"<对方QQ号或group:群号>","text":"<回复内容>"}。审批与频率限制由插件强制：semi 档下你只能回话（对方 30 分钟内来过才能发），不能主动搭讪。`,
     )
+    // 主动行动（发空间动态等）：她在唤醒回复的末尾写 ```action 块，插件解析→审批→执行
+    caps.push(actionCatalogPrompt())
   }
   return caps
 }
@@ -123,15 +127,16 @@ export function apply(ctx, config = {}) {
         if (qq) {
           last.qq = qq
           qqReceivers.push(qq)
-          qqRegistry.set(whale.id, { whale, api: qq.api, recentPeers, peersFile: qq.peersFile })
+          qqRegistry.set(whale.id, { whale, api: qq.api, selfId: qq.selfId, state: qq.state, recentPeers, peersFile: qq.peersFile })
         }
       }
     }
 
     // 行动路由：插件自有的独立 HTTP 服务器（审批/节流/留痕在插件进程内强制）
+    const getQQByWhale = (whaleId) => (whaleId ? qqRegistry.get(whaleId) : [...qqRegistry.values()][0] ?? null)
     const routes = await startRouteServer({
       port: Number(config.routePort ?? 3939),
-      getQQ: (whaleId) => (whaleId ? qqRegistry.get(whaleId) : [...qqRegistry.values()][0] ?? null),
+      getQQ: getQQByWhale,
       // 会话列表用：枚举全部已就绪的 QQ 平台（/peers）
       getAllQQ: () => [...qqRegistry.values()],
       getStatus: () => ({
@@ -149,9 +154,47 @@ export function apply(ctx, config = {}) {
     stopRoutes = routes.stop
     routePort = routes.port
 
-    // 设置页「鲸生」区块：webServer 挂 HTML 片段；不可用时降级为独立页面链接
-    //（webServer 不列入 inject——它是增强入口，缺席不能拖垮核心行动路由 ✓）
-    stopSettings = registerSettingsSection({ ctx, port: routePort, log })
+    // 行动执行器：她的 ```action 意图 → 审批 → NapCat 执行（发动态等），留痕 outbox
+    const actionExecutor = createActionExecutor({ getQQ: getQQByWhale, log })
+
+    // 唤醒回复落地：等她写完 → 独白进日记 → 行动块解析执行
+    async function watchWakeReply(w, baselineTurns) {
+      const sessionId = w.bridge.sessionId
+      if (!sessionId) return
+      const reply = await waitTurnComplete(sessionId, baselineTurns, { timeoutMs: 180_000 })
+      if (reply == null) {
+        log(`「${w.persona.name}」的唤醒回复未捕获（超时或空）——行动跳过`)
+        return
+      }
+      const actions = parseActionBlock(reply)
+      const monologue = reply.replace(/```action[\s\S]*?```/g, '').trim()
+      if (monologue) {
+        await appendDiary(w.home, {
+          text: `醒来独白：${monologue.slice(0, 400)}`,
+          timezone: w.whale.rhythm.timezone,
+        })
+      }
+      for (const action of actions) {
+        const r = await actionExecutor.execute(w.whale.id, action)
+        log(`行动 ${action.op} → ${r.status}${r.status === 'error' ? `（${r.detail}）` : ''}`)
+        await appendDiary(w.home, {
+          text: `行动 ${action.op}：${r.status === 'executed' ? '已执行' : r.status === 'drafted' ? '草稿待放行' : `失败（${String(r.detail).slice(0, 120)}）`}`,
+          timezone: w.whale.rhythm.timezone,
+        })
+      }
+    }
+
+    // 设置页「鲸生」区块：DSH Web 的 webServer 就绪后挂 HTML 片段。
+    // 用运行时注入（ctx.inject）：服务出现时回调执行，缺席时静默跳过——
+    // 增强入口永不拖垮核心（QQ/路由/心跳）✓；独立页面 http://127.0.0.1:3939/settings-page 恒可用。
+    try {
+      const fiber = ctx.inject?.(['webServer'], (wsCtx) => {
+        stopSettings = registerSettingsSection({ ctx: wsCtx, port: routePort, log })
+      })
+      if (!fiber) stopSettings = registerSettingsSection({ ctx, port: routePort, log }) // 旧版 cordis 兜底
+    } catch (e) {
+      log(`设置页区块注入失败（独立页面仍可用）：${e.message}`)
+    }
 
     // 离线补收：路由就绪后，把睡着期间错过的私聊补给她
     for (const cu of pendingCatchups) {
@@ -181,6 +224,9 @@ export function apply(ctx, config = {}) {
             if (!controller) continue
             try {
               const memory = await recallContext(w.home)
+              // baseline 先取：wake 投递后新回复 = turns 超过它（行动解析靠这个等回复完成）
+              const baselineStats = w.bridge.sessionId ? await getProjcacheStats(w.bridge.sessionId) : null
+              const baselineTurns = baselineStats?.stats?.turns ?? 0
               await w.bridge.wake(wakePrompt({
                 persona: w.persona, whale: w.whale, action: entry.action, memory,
                 capabilities: capabilitiesFor(w.whale, routePort),
@@ -190,6 +236,8 @@ export function apply(ctx, config = {}) {
                 timezone: w.whale.rhythm.timezone,
               })
               log(`「${w.persona.name}」醒来：${entry.action}`)
+              // 她的回复完成后：解析 ```action 行动块 → 审批/执行；她的独白进日记（不阻塞 ticker）
+              watchWakeReply(w, baselineTurns).catch((e) => log(`行动处理失败（不影响作息）：${e.message}`))
             } catch (e) {
               w.fired.delete(key)
               const detail = [e?.details?.reason ?? e?.data?.reason, e?.code, e?.cause?.message]

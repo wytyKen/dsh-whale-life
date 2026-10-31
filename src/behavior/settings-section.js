@@ -85,10 +85,6 @@ function markup({ pageUrl }) {
     '    <div data-wl="status"><div class="wl-hint">读取中…</div></div>',
     '  </section>',
     '  <section class="wl-card">',
-    '    <div class="wl-card-head"><span class="wl-card-title">QQ 接入（NapCat）</span><span class="wl-badge" data-wl="napcat-state">…</span></div>',
-    '    <div data-wl="napcat"><div class="wl-hint">读取中…</div></div>',
-    '  </section>',
-    '  <section class="wl-card">',
     '    <div class="wl-card-head"><span class="wl-card-title">好友对话</span><span class="wl-badge" data-wl="peers-count"></span></div>',
     '    <div data-wl="peers"><div class="wl-hint">读取中…</div></div>',
     '  </section>',
@@ -185,24 +181,29 @@ function script({ apiBase }) {
             '<dl class="wl-kv">' +
               '<dt>ID</dt><dd>#' + esc(w.id) + '</dd>' +
               '<dt>审批档</dt><dd>' + esc(APPROVAL[w.approvalMode] || w.approvalMode) + '</dd>' +
-              '<dt>记忆</dt><dd><label style="cursor:pointer"><input type="checkbox" checked onchange="this.nextElementSibling.textContent=this.checked?\'开启\':\'关闭\'"> <span>开启</span></label> <span class="wl-hint">（所有会话共用）</span></dd>' +
+              '<dt>记忆</dt><dd><label style="cursor:pointer"><input type="checkbox" checked onchange="this.nextElementSibling.textContent=this.checked?&#39;开启&#39;:&#39;关闭&#39;"> <span>开启</span></label> <span class="wl-hint">（所有会话共用）</span></dd>' +
               '<dt>心跳</dt><dd>' + (j.ticker && j.ticker.running ? '运行中 ✓' : '停止') + '</dd>' +
             '</dl>' +
+            (w.qq ? '<div data-wl-napcat="' + esc(w.id) + '"><div class="wl-hint">QQ 接入状态读取中…</div></div>' : '') +
           '</div>');
       });
       // 假的添加按钮（后续实现多鲸生管理）
       cards.push(
-        '<div class="wl-card" style="text-align:center;border-style:dashed;cursor:pointer;opacity:.6" onclick="this.querySelector(\'.wl-hint\').textContent=\'多鲸生管理即将上线，敬请期待 🐋\'">' +
+        '<div class="wl-card" style="text-align:center;border-style:dashed;cursor:pointer;opacity:.6" onclick="this.querySelector(&#39;.wl-hint&#39;).textContent=&#39;多鲸生管理即将上线，敬请期待 🐋&#39;">' +
           '<span style="font-size:20px">＋</span>' +
           '<div class="wl-hint">添加鲸生</div>' +
         '</div>');
       box.innerHTML = cards.join('');
+      // 记录接入 QQ 的鲸 → 拉各自的 NapCat 状态填充卡片子区
+      qqWhaleIds = whales.filter(function (w) { return !!w.qq; }).map(function (w) { return w.id; });
+      refreshNapcat();
     }
 
-    // ── 卡片 2：QQ 接入（NapCat 控制台）─────────────
-    // 登录三态：🟢 在线（WS 已连）/ 🟡 等待登录（显示内嵌二维码）/ ⚪ 未启动。
-    // QQNT 没有账号密码登录——快速登录（登录态有效时免扫码）+ 扫码是仅有的两条路。
+    // ── 每鲸卡片内：QQ 接入（NapCat 控制台）─────────
+    // 登录三态：🟢 在线（该鲸的 WS 已连）/ 🟡 等待登录（显示内嵌二维码）/ ⚪ 未启动。
+    // 每只鲸的 QQ 独立（自己的号、自己的二维码、自己的开关）——卡片自包含。
     var napcatFastTimer = null;
+    var qqWhaleIds = []; // 最近一次 /status 里接入 QQ 的鲸 id
     function napcatPhase(j) {
       if (!j || !j.ok) return { key: 'err', badge: ['', '未知'], needFast: true }
       if (!j.installed) return { key: 'no-install', badge: ['wl-badge-bad', '未安装'], needFast: false }
@@ -210,21 +211,21 @@ function script({ apiBase }) {
       if (j.running) return { key: 'waiting', badge: ['wl-badge-warn', '等待登录'], needFast: true }
       return { key: 'stopped', badge: ['', '未启动'], needFast: true }
     }
-    function renderNapcat(j) {
-      var box = $('napcat');
-      var stateEl = $('napcat-state');
+    function fillNapcat(whaleId, j) {
+      var box = root.querySelector('[data-wl-napcat="' + whaleId + '"]');
       if (!box) return;
       var ph = napcatPhase(j);
-      if (stateEl) setBadge(stateEl, ph.badge[0], ph.badge[1]);
       if (ph.key === 'err') { box.innerHTML = '<div class="wl-err">' + esc((j && j.error) || '无法读取 /qq/napcat') + '</div>'; return; }
-
-      var html = '';
+      var html = '<div style="display:flex;align-items:center;gap:8px;margin-top:10px">'
+        + '<span class="wl-badge ' + ph.badge[0] + '">' + esc(ph.badge[1]) + '</span>'
+        + (j.selfId ? '<span class="wl-hint">QQ ' + esc(String(j.selfId)) + '</span>' : '')
+        + '</div>';
       if (ph.key === 'no-install') {
         box.innerHTML = hint('未找到 NapCat 安装（tools/napcat/onekey/）。请先运行 scripts/qq-setup.mjs 完成接入。');
         return;
       }
       if (ph.key === 'online') {
-        html += hint('QQ 已连接 ✓（' + esc(String(j.selfId || '')) + '）——她在网上了。');
+        html += hint('QQ 已连接 ✓ 她在网上了（会话/动态/行动能力可用）。');
       } else if (ph.key === 'waiting') {
         var qr = j.qr || {};
         if (qr.available) {
@@ -234,52 +235,64 @@ function script({ apiBase }) {
         } else {
           html += hint('NapCat 已启动，等待登录二维码生成…（若长时间无码请点刷新）');
         }
-        html += '<div class="wl-btns" style="margin-top:8px"><button type="button" class="wl-btn wl-btn2" data-wl-act="napcat-restart">刷新二维码</button></div>';
+        html += '<div class="wl-btns" style="margin-top:8px"><button type="button" class="wl-btn wl-btn2" data-wl-act="napcat-restart" data-whale="' + esc(whaleId) + '">刷新二维码</button></div>';
       } else {
-        html += hint('NapCat 未启动。点击下方按钮启动（登录态有效时自动快速登录，无需扫码）。');
-        html += '<div class="wl-btns" style="margin-top:8px"><button type="button" class="wl-btn" data-wl-act="napcat-start">启动 NapCat</button></div>';
+        html += hint('NapCat 未启动。点击启动（登录态有效时自动快速登录，无需扫码）。');
+        html += '<div class="wl-btns" style="margin-top:8px"><button type="button" class="wl-btn" data-wl-act="napcat-start" data-whale="' + esc(whaleId) + '">启动 NapCat</button></div>';
       }
-      html += '<div style="margin-top:10px"><label style="cursor:pointer;font-size:12px"><input type="checkbox" data-wl-act="napcat-autoboot"'
-        + (j.autoBoot ? ' checked' : '') + '> DSH 启动时自动拉起 NapCat</label></div>';
-      html += '<div class="wl-msg" data-wl="napcat-msg"></div>';
+      html += '<div style="margin-top:10px"><label style="cursor:pointer;font-size:12px"><input type="checkbox" data-wl-act="napcat-autoboot" data-whale="' + esc(whaleId) + '"'
+        + (j.autoBoot ? ' checked' : '') + '> DSH 启动时自动拉起</label></div>';
+      html += '<div class="wl-msg" data-wl="napcat-msg-' + esc(whaleId) + '"></div>';
       box.innerHTML = html;
     }
-    var napcatBox = $('napcat');
-    if (napcatBox) {
-      napcatBox.addEventListener('click', function (ev) {
-        var btn = ev.target && ev.target.closest ? ev.target.closest('[data-wl-act]') : null;
-        if (!btn || btn.tagName !== 'BUTTON') return;
-        var act = btn.getAttribute('data-wl-act');
-        var msg = $('napcat-msg');
-        btn.disabled = true;
-        if (msg) { msg.textContent = act === 'napcat-restart' ? '正在重启登录（拿新二维码）…' : '启动中…'; msg.className = 'wl-msg'; }
-        post(act === 'napcat-restart' ? '/qq/napcat/restart' : '/qq/napcat/start', {})
-          .then(function (j2) {
-            if (msg) {
-              msg.textContent = j2 && j2.ok ? '✓ 已发出（等十几秒后状态自动更新）' : '✗ ' + ((j2 && j2.error) || '失败');
-              msg.className = 'wl-msg ' + (j2 && j2.ok ? 'wl-msg-ok' : 'wl-msg-err');
-            }
-            refreshNapcat();
-          }).catch(function (e) {
-            if (msg) { msg.textContent = '✗ ' + (e && e.message ? e.message : e); msg.className = 'wl-msg wl-msg-err'; }
-            btn.disabled = false;
-          });
-      });
-      napcatBox.addEventListener('change', function (ev) {
-        var cb = ev.target;
-        if (!cb || cb.getAttribute('data-wl-act') !== 'napcat-autoboot') return;
-        var msg = $('napcat-msg');
-        if (msg) { msg.textContent = '保存中…'; msg.className = 'wl-msg'; }
-        post('/qq/autoboot', { enabled: cb.checked }).then(function (j2) {
+    function refreshNapcat() {
+      if (!qqWhaleIds.length) return Promise.resolve();
+      var needFast = false;
+      return Promise.all(qqWhaleIds.map(function (id) {
+        return get('/qq/napcat?whale=' + encodeURIComponent(id)).then(function (j) {
+          fillNapcat(id, j);
+          if (napcatPhase(j).needFast) needFast = true;
+        }).catch(function () {});
+      })).then(function () { scheduleNapcatPoll(needFast); });
+    }
+    // 注：refreshAll 不再单独调 refreshNapcat——renderStatus 渲染完卡片（子区容器存在）后自动触发。
+    // 事件委托挂在 root：鲸卡 innerXML 会随刷新重建，容器级监听不丢事件
+    root.addEventListener('click', function (ev) {
+      var btn = ev.target && ev.target.closest ? ev.target.closest('[data-wl-act]') : null;
+      if (!btn || btn.tagName !== 'BUTTON') return;
+      var act = btn.getAttribute('data-wl-act');
+      if (act !== 'napcat-start' && act !== 'napcat-restart') return;
+      var whaleId = btn.getAttribute('data-whale') || '';
+      var msg = root.querySelector('[data-wl="napcat-msg-' + whaleId + '"]');
+      btn.disabled = true;
+      if (msg) { msg.textContent = act === 'napcat-restart' ? '正在重启登录（拿新二维码）…' : '启动中…'; msg.className = 'wl-msg'; }
+      post((act === 'napcat-restart' ? '/qq/napcat/restart' : '/qq/napcat/start') + (whaleId ? '?whale=' + encodeURIComponent(whaleId) : ''), {})
+        .then(function (j2) {
           if (msg) {
-            msg.textContent = j2 && j2.ok ? (cb.checked ? '✓ 已开启自动拉起' : '✓ 已关闭自动拉起') : '✗ ' + ((j2 && j2.error) || '失败');
+            msg.textContent = j2 && j2.ok ? '✓ 已发出（等十几秒后状态自动更新）' : '✗ ' + ((j2 && j2.error) || '失败');
             msg.className = 'wl-msg ' + (j2 && j2.ok ? 'wl-msg-ok' : 'wl-msg-err');
           }
+          refreshNapcat();
         }).catch(function (e) {
           if (msg) { msg.textContent = '✗ ' + (e && e.message ? e.message : e); msg.className = 'wl-msg wl-msg-err'; }
+          btn.disabled = false;
         });
+    });
+    root.addEventListener('change', function (ev) {
+      var cb = ev.target;
+      if (!cb || cb.getAttribute('data-wl-act') !== 'napcat-autoboot') return;
+      var whaleId = cb.getAttribute('data-whale') || '';
+      var msg = root.querySelector('[data-wl="napcat-msg-' + whaleId + '"]');
+      if (msg) { msg.textContent = '保存中…'; msg.className = 'wl-msg'; }
+      post('/qq/autoboot', { enabled: cb.checked }).then(function (j2) {
+        if (msg) {
+          msg.textContent = j2 && j2.ok ? (cb.checked ? '✓ 已开启自动拉起' : '✓ 已关闭自动拉起') : '✗ ' + ((j2 && j2.error) || '失败');
+          msg.className = 'wl-msg ' + (j2 && j2.ok ? 'wl-msg-ok' : 'wl-msg-err');
+        }
+      }).catch(function (e) {
+        if (msg) { msg.textContent = '✗ ' + (e && e.message ? e.message : e); msg.className = 'wl-msg wl-msg-err'; }
       });
-    }
+    });
     function scheduleNapcatPoll(need) {
       if (need && !napcatFastTimer) {
         napcatFastTimer = setInterval(function () { if (!document.hidden) refreshNapcat(); }, 5000);
@@ -396,17 +409,14 @@ function script({ apiBase }) {
     }
 
     // ── 拉取（各卡片互不拖累）+ 30s 轮询 ─────────────
+    // refreshNapcat 已在上方（每鲸版）：renderStatus 渲染卡片后自动触发。
     function refreshStatus() { get('/status').then(renderStatus).catch(function (e) { renderStatus({ ok: false, error: e && e.message }); }); }
     function refreshPeers() { get('/peers').then(renderPeers).catch(function (e) { renderPeers({ ok: false, error: e && e.message }); }); }
     function refreshOutbox() { get('/outbox/list').then(renderOutbox).catch(function (e) { renderOutbox({ ok: false, error: e && e.message }); }); }
     function refreshPersonas() { get('/personas').then(renderPersonas).catch(function (e) { renderPersonas({ ok: false, error: e && e.message }); }); }
-    function refreshNapcat() {
-      get('/qq/napcat').then(function (j) { renderNapcat(j); scheduleNapcatPoll(napcatPhase(j).needFast); })
-        .catch(function (e) { renderNapcat({ ok: false, error: e && e.message }); scheduleNapcatPoll(false); });
-    }
     function refreshAll() {
       if (document.hidden) return;
-      refreshStatus(); refreshPeers(); refreshOutbox(); refreshPersonas(); refreshNapcat();
+      refreshStatus(); refreshPeers(); refreshOutbox(); refreshPersonas();
     }
     refreshAll();
     root.__wlTimer = setInterval(refreshAll, 30000);

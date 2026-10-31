@@ -32,7 +32,11 @@ export async function loadQQConfig(file = QQ_CONFIG_FILE) {
  * @returns {{ stop(): void, api, selfId, peersFile, conversationManager, state(): object } | null}
  */
 export async function registerQQ({ whale, home, controller, workspaceId, persona, recentPeers, log = () => {}, config: override } = {}) {
-  const config = override ?? await loadQQConfig()
+  // 连接配置：全局 data/secrets/qq.json 为底，每鲸 platforms.qq 字段覆盖
+  //（多鲸生时各鲸有自己的 selfId / 端口，互不串线；accessToken 等敏感值留在全局 secrets）
+  const globalConfig = override ?? await loadQQConfig()
+  const perWhale = whale.platforms?.qq ?? {}
+  const config = globalConfig ? { ...globalConfig, ...Object.fromEntries(Object.entries(perWhale).filter(([, v]) => v !== undefined)) } : null
   if (!config) {
     log(`⚠ #${whale.id} 配置了 QQ，但缺少连接文件 ${QQ_CONFIG_FILE} —— QQ 未接入`)
     return null

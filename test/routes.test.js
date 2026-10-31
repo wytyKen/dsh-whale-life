@@ -126,3 +126,18 @@ test('POST /qq/autoboot：缺 enabled 或缺 qq.json 报 400', async () => {
     // 这里只测缺字段分支，避免动真实 secrets。
   })
 })
+
+test('settingsFragment/settingsPage 内嵌脚本必须是合法 JS', async () => {
+  // 回归：模板字符串里的 \' 求值后变成裸单引号，会截断内嵌脚本的字符串，
+  // 导致整页所有卡片永远停在「读取中」。HTML 属性内的引号必须写 &#39;。
+  const { settingsFragment, settingsPage } = await import('../src/behavior/settings-section.js')
+  for (const [name, html] of [
+    ['settingsPage', settingsPage()],
+    ['settingsFragment', settingsFragment({ apiBase: 'http://127.0.0.1:3939', pageUrl: 'http://127.0.0.1:3939/settings-page' })],
+  ]) {
+    const start = html.indexOf('<script>') + '<script>'.length
+    const end = html.indexOf('</' + 'script>')
+    assert.ok(start > '<script>'.length && end > start, `${name} 应包含内嵌 script`)
+    assert.doesNotThrow(() => new Function(html.slice(start, end)), `${name} 内嵌脚本语法错误（页面会停在读取中）`)
+  }
+})

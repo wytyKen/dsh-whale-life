@@ -325,32 +325,38 @@ export function startRouteServer({ port = 3939, getQQ, getAllQQ, getStatus, boot
         return json(res, 200, { ok: true, executed: true, messageId: r?.message_id })
       }
 
-      // ── NapCat 控制台：状态 / 启动 / 重启（刷新二维码）/ 二维码 / autoBoot ──
+      // ── NapCat 控制台（每鲸一份）：状态 / 启动 / 重启（刷新二维码）/ 二维码 / autoBoot ──
+      // ?whale=<id> 指定鲸；缺省取第一只已接入的（向后兼容单鲸时期的前端）。
+      const resolveWhaleEntry = (whaleId) => {
+        const entry = whaleId ? getQQ(whaleId) : getQQ()
+        return entry ?? null
+      }
+
       if (req.method === 'GET' && url.pathname === '/qq/napcat') {
+        const entry = resolveWhaleEntry(url.searchParams.get('whale'))
         const config = await readQQConfig()
+        const perWhaleAutoBoot = entry?.whale?.platforms?.qq?.autoBoot
         const [running, qr] = await Promise.all([boot.isRunning(), Promise.resolve(boot.qrcode())])
-        const wsState = (getQQ()?.state?.() ?? {}).receiver ?? null
+        const wsState = (typeof entry?.state === 'function' ? entry.state() : {})?.receiver ?? null
         return json(res, 200, {
           ok: true,
+          whale: entry?.whale?.id ?? null,
           installed: running.installed,
           running: running.running,
-          wsState, // online = 反向 WS 已连（真·在线）；listening + running = 等待登录
-          selfId: config?.selfId ?? null,
-          autoBoot: config ? config.autoBoot !== false : false,
+          wsState, // online = 该鲸的反向 WS 已连（真·在线）；listening + running = 等待登录
+          selfId: entry?.selfId ?? config?.selfId ?? null,
+          autoBoot: perWhaleAutoBoot ?? (config ? config.autoBoot !== false : false),
           qr: { available: qr.available, mtimeMs: qr.mtimeMs ?? null, ageMs: qr.ageMs ?? null, stale: qr.stale ?? false },
         })
       }
 
-      if (req.method === 'POST' && url.pathname === '/qq/napcat/start') {
+      if (req.method === 'POST' && (url.pathname === '/qq/napcat/start' || url.pathname === '/qq/napcat/restart')) {
+        const entry = resolveWhaleEntry(url.searchParams.get('whale'))
         const config = await readQQConfig()
-        const r = await boot.start(config?.selfId)
-        if (r.error) return json(res, 400, { ok: false, error: r.error })
-        return json(res, 200, { ok: true, ...r })
-      }
-
-      if (req.method === 'POST' && url.pathname === '/qq/napcat/restart') {
-        const config = await readQQConfig()
-        const r = await boot.restart(config?.selfId)
+        const selfId = entry?.selfId ?? config?.selfId
+        const r = url.pathname.endsWith('/restart')
+          ? await boot.restart(selfId)
+          : await boot.start(selfId)
         if (r.error) return json(res, 400, { ok: false, error: r.error })
         return json(res, 200, { ok: true, ...r })
       }
