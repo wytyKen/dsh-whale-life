@@ -12,7 +12,7 @@
     "personas/**/*"
   ],
   "scripts": {
-    "test": "node --test test/config.test.js test/behavior.test.js test/bilibili.test.js test/qq.test.js test/routes.test.js"
+    "test": "node --test test/config.test.js test/behavior.test.js test/bilibili.test.js test/qq.test.js test/boot.test.js test/routes.test.js"
   },
   "keywords": [
     "dsh",

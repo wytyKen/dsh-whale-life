@@ -12,6 +12,7 @@ import { createQQSession } from './session.js'
 import { createConversationManager } from './conversation.js'
 import { createResponder } from './responder.js'
 import { createPeerStore } from './catchup.js'
+import { createNapCatBoot } from './boot.js'
 
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
 const QQ_CONFIG_FILE = path.join(PLUGIN_ROOT, 'data', 'secrets', 'qq.json')
@@ -38,6 +39,20 @@ export async function registerQQ({ whale, home, controller, workspaceId, persona
   }
 
   const api = createQQApi({ config })
+
+  // autoBoot（默认开）：DSH 启动即拉起 NapCat——登录态有效时全自动连上，
+  // 失效则等扫码（设置页「QQ 接入」卡片会内嵌显示二维码）。
+  if (config.autoBoot !== false) {
+    const boot = createNapCatBoot({ log })
+    boot.isRunning().then((info) => {
+      if (info.installed && !info.running) {
+        log('autoBoot：NapCat 未在运行，自动拉起（快速登录）…')
+        return boot.start(config.selfId)
+      }
+      return null
+    }).catch(() => {})
+  }
+
   // home 已是 data/<whaleId>，不要再拼 whale.id（避免 data/<id>/<id>/ 翻倍）
   const peerStore = createPeerStore(path.join(home, 'qq-peers.json'))
 

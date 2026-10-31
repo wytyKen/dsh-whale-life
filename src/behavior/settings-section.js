@@ -63,6 +63,9 @@ const CSS = [
   '.wl-msg{font-size:12px;line-height:18px;min-height:0;margin:6px 0 0}',
   '.wl-msg-ok{color:#2e9e5b}',
   '.wl-msg-err{color:var(--dsw-alias-state-error-primary,#d93026)}',
+  '.wl-qr{margin:10px auto 2px;width:min(220px,80%);background:#fff;border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.28));border-radius:10px;padding:10px;text-align:center}',
+  '.wl-qr img{width:100%;height:auto;display:block;image-rendering:pixelated}',
+  '.wl-qr-hint{font-size:11px;color:#6b7280;margin-top:6px}',
 ].join('')
 
 // ── 静态骨架（数据位留空，全部由前端 fetch 填充）────────────────────────────
@@ -80,6 +83,10 @@ function markup({ pageUrl }) {
     '  <section class="wl-card">',
     '    <div class="wl-card-head"><span class="wl-card-title">生命体征</span><span class="wl-badge" data-wl="alive">…</span></div>',
     '    <div data-wl="status"><div class="wl-hint">读取中…</div></div>',
+    '  </section>',
+    '  <section class="wl-card">',
+    '    <div class="wl-card-head"><span class="wl-card-title">QQ 接入（NapCat）</span><span class="wl-badge" data-wl="napcat-state">…</span></div>',
+    '    <div data-wl="napcat"><div class="wl-hint">读取中…</div></div>',
     '  </section>',
     '  <section class="wl-card">',
     '    <div class="wl-card-head"><span class="wl-card-title">好友对话</span><span class="wl-badge" data-wl="peers-count"></span></div>',
@@ -192,7 +199,97 @@ function script({ apiBase }) {
       box.innerHTML = cards.join('');
     }
 
-    // ── 卡片 2：好友对话 ─────────────────────────────
+    // ── 卡片 2：QQ 接入（NapCat 控制台）─────────────
+    // 登录三态：🟢 在线（WS 已连）/ 🟡 等待登录（显示内嵌二维码）/ ⚪ 未启动。
+    // QQNT 没有账号密码登录——快速登录（登录态有效时免扫码）+ 扫码是仅有的两条路。
+    var napcatFastTimer = null;
+    function napcatPhase(j) {
+      if (!j || !j.ok) return { key: 'err', badge: ['', '未知'], needFast: true }
+      if (!j.installed) return { key: 'no-install', badge: ['wl-badge-bad', '未安装'], needFast: false }
+      if (j.wsState === 'online') return { key: 'online', badge: ['wl-badge-ok', '在线'], needFast: false }
+      if (j.running) return { key: 'waiting', badge: ['wl-badge-warn', '等待登录'], needFast: true }
+      return { key: 'stopped', badge: ['', '未启动'], needFast: true }
+    }
+    function renderNapcat(j) {
+      var box = $('napcat');
+      var stateEl = $('napcat-state');
+      if (!box) return;
+      var ph = napcatPhase(j);
+      if (stateEl) setBadge(stateEl, ph.badge[0], ph.badge[1]);
+      if (ph.key === 'err') { box.innerHTML = '<div class="wl-err">' + esc((j && j.error) || '无法读取 /qq/napcat') + '</div>'; return; }
+
+      var html = '';
+      if (ph.key === 'no-install') {
+        box.innerHTML = hint('未找到 NapCat 安装（tools/napcat/onekey/）。请先运行 scripts/qq-setup.mjs 完成接入。');
+        return;
+      }
+      if (ph.key === 'online') {
+        html += hint('QQ 已连接 ✓（' + esc(String(j.selfId || '')) + '）——她在网上了。');
+      } else if (ph.key === 'waiting') {
+        var qr = j.qr || {};
+        if (qr.available) {
+          var staleTip = qr.stale ? ' <b style="color:var(--dsw-alias-state-error-primary,#d93026)">二维码可能已过期，请点击刷新</b>' : '';
+          html += '<div class="wl-qr"><img alt="QQ 登录二维码" src="' + API + '/qq/qrcode?t=' + Number(qr.mtimeMs || 0) + '">'
+            + '<div class="wl-qr-hint">用她的手机 QQ 扫码登录' + staleTip + '</div></div>';
+        } else {
+          html += hint('NapCat 已启动，等待登录二维码生成…（若长时间无码请点刷新）');
+        }
+        html += '<div class="wl-btns" style="margin-top:8px"><button type="button" class="wl-btn wl-btn2" data-wl-act="napcat-restart">刷新二维码</button></div>';
+      } else {
+        html += hint('NapCat 未启动。点击下方按钮启动（登录态有效时自动快速登录，无需扫码）。');
+        html += '<div class="wl-btns" style="margin-top:8px"><button type="button" class="wl-btn" data-wl-act="napcat-start">启动 NapCat</button></div>';
+      }
+      html += '<div style="margin-top:10px"><label style="cursor:pointer;font-size:12px"><input type="checkbox" data-wl-act="napcat-autoboot"'
+        + (j.autoBoot ? ' checked' : '') + '> DSH 启动时自动拉起 NapCat</label></div>';
+      html += '<div class="wl-msg" data-wl="napcat-msg"></div>';
+      box.innerHTML = html;
+    }
+    var napcatBox = $('napcat');
+    if (napcatBox) {
+      napcatBox.addEventListener('click', function (ev) {
+        var btn = ev.target && ev.target.closest ? ev.target.closest('[data-wl-act]') : null;
+        if (!btn || btn.tagName !== 'BUTTON') return;
+        var act = btn.getAttribute('data-wl-act');
+        var msg = $('napcat-msg');
+        btn.disabled = true;
+        if (msg) { msg.textContent = act === 'napcat-restart' ? '正在重启登录（拿新二维码）…' : '启动中…'; msg.className = 'wl-msg'; }
+        post(act === 'napcat-restart' ? '/qq/napcat/restart' : '/qq/napcat/start', {})
+          .then(function (j2) {
+            if (msg) {
+              msg.textContent = j2 && j2.ok ? '✓ 已发出（等十几秒后状态自动更新）' : '✗ ' + ((j2 && j2.error) || '失败');
+              msg.className = 'wl-msg ' + (j2 && j2.ok ? 'wl-msg-ok' : 'wl-msg-err');
+            }
+            refreshNapcat();
+          }).catch(function (e) {
+            if (msg) { msg.textContent = '✗ ' + (e && e.message ? e.message : e); msg.className = 'wl-msg wl-msg-err'; }
+            btn.disabled = false;
+          });
+      });
+      napcatBox.addEventListener('change', function (ev) {
+        var cb = ev.target;
+        if (!cb || cb.getAttribute('data-wl-act') !== 'napcat-autoboot') return;
+        var msg = $('napcat-msg');
+        if (msg) { msg.textContent = '保存中…'; msg.className = 'wl-msg'; }
+        post('/qq/autoboot', { enabled: cb.checked }).then(function (j2) {
+          if (msg) {
+            msg.textContent = j2 && j2.ok ? (cb.checked ? '✓ 已开启自动拉起' : '✓ 已关闭自动拉起') : '✗ ' + ((j2 && j2.error) || '失败');
+            msg.className = 'wl-msg ' + (j2 && j2.ok ? 'wl-msg-ok' : 'wl-msg-err');
+          }
+        }).catch(function (e) {
+          if (msg) { msg.textContent = '✗ ' + (e && e.message ? e.message : e); msg.className = 'wl-msg wl-msg-err'; }
+        });
+      });
+    }
+    function scheduleNapcatPoll(need) {
+      if (need && !napcatFastTimer) {
+        napcatFastTimer = setInterval(function () { if (!document.hidden) refreshNapcat(); }, 5000);
+      } else if (!need && napcatFastTimer) {
+        clearInterval(napcatFastTimer);
+        napcatFastTimer = null;
+      }
+    }
+
+    // ── 卡片 3：好友对话 ─────────────────────────────
     function renderPeers(j) {
       var box = $('peers');
       var count = $('peers-count');
@@ -303,9 +400,13 @@ function script({ apiBase }) {
     function refreshPeers() { get('/peers').then(renderPeers).catch(function (e) { renderPeers({ ok: false, error: e && e.message }); }); }
     function refreshOutbox() { get('/outbox/list').then(renderOutbox).catch(function (e) { renderOutbox({ ok: false, error: e && e.message }); }); }
     function refreshPersonas() { get('/personas').then(renderPersonas).catch(function (e) { renderPersonas({ ok: false, error: e && e.message }); }); }
+    function refreshNapcat() {
+      get('/qq/napcat').then(function (j) { renderNapcat(j); scheduleNapcatPoll(napcatPhase(j).needFast); })
+        .catch(function (e) { renderNapcat({ ok: false, error: e && e.message }); scheduleNapcatPoll(false); });
+    }
     function refreshAll() {
       if (document.hidden) return;
-      refreshStatus(); refreshPeers(); refreshOutbox(); refreshPersonas();
+      refreshStatus(); refreshPeers(); refreshOutbox(); refreshPersonas(); refreshNapcat();
     }
     refreshAll();
     root.__wlTimer = setInterval(refreshAll, 30000);

@@ -11,6 +11,11 @@
 //   POST /outbox/approve { file, approve }  放行（真发）/ 拒绝（留痕）
 //   GET  /peers          她的活跃 QQ 会话（peerKey → 名字/最近消息/最后活跃）
 //   GET  /settings-page  独立管理面板（完整 HTML，同源 fetch 上述 API）
+//   GET  /qq/napcat      NapCat 进程状态 + 登录二维码状态（设置页控制台用）
+//   POST /qq/napcat/start    启动 NapCat（快速登录；已在跑则 no-op）
+//   POST /qq/napcat/restart  重启登录流程（杀掉重来 = 拿一张新二维码）
+//   GET  /qq/qrcode      登录二维码 PNG（前端内嵌显示；no-store 防缓存）
+//   POST /qq/autoboot    { enabled }  DSH 启动时自动拉起 NapCat 的开关
 
 import http from 'node:http'
 import path from 'node:path'
@@ -18,9 +23,11 @@ import { writeFile, mkdir, readFile, readdir } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { listPersonas } from '../config/persona.js'
 import { settingsPage } from './settings-section.js'
+import { createNapCatBoot } from '../platforms/qq/boot.js'
 
 const PLUGIN_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
 const OUTBOX_DIR = path.join(PLUGIN_ROOT, 'data', 'outbox')
+const QQ_CONFIG_FILE = path.join(PLUGIN_ROOT, 'data', 'secrets', 'qq.json')
 const REPLY_WINDOW_MS = 30 * 60 * 1000 // semi 档：仅允许回复 30 分钟内主动来找过她的人
 const OUTBOX_LIST_LIMIT = 50   // 待审清单最多返回 50 条
 const PEERS_LIMIT = 20         // 会话列表最多 20 个
@@ -210,7 +217,17 @@ async function listPeers({ getAllQQ }) {
   return peers.map(({ _api, ...rest }) => rest)
 }
 
-export function startRouteServer({ port = 3939, getQQ, getAllQQ, getStatus, log = () => {} } = {}) {
+// ── qq.json 读写（autoBoot 开关；QQ 连接参数归 qq-setup 管，这里只碰这一个字段）──
+async function readQQConfig(file = QQ_CONFIG_FILE) {
+  try { return JSON.parse(await readFile(file, 'utf8')) } catch { return null }
+}
+async function writeQQConfig(config, file = QQ_CONFIG_FILE) {
+  await mkdir(path.dirname(file), { recursive: true })
+  await writeFile(file, JSON.stringify(config, null, 2) + '\n')
+}
+
+export function startRouteServer({ port = 3939, getQQ, getAllQQ, getStatus, boot: bootOverride, log = () => {} } = {}) {
+  const boot = bootOverride ?? createNapCatBoot({ log })
   const server = http.createServer(async (req, res) => {
     try {
       const url = new URL(req.url, `http://127.0.0.1:${port}`)
@@ -308,6 +325,57 @@ export function startRouteServer({ port = 3939, getQQ, getAllQQ, getStatus, log 
         return json(res, 200, { ok: true, executed: true, messageId: r?.message_id })
       }
 
+      // ── NapCat 控制台：状态 / 启动 / 重启（刷新二维码）/ 二维码 / autoBoot ──
+      if (req.method === 'GET' && url.pathname === '/qq/napcat') {
+        const config = await readQQConfig()
+        const [running, qr] = await Promise.all([boot.isRunning(), Promise.resolve(boot.qrcode())])
+        const wsState = (getQQ()?.state?.() ?? {}).receiver ?? null
+        return json(res, 200, {
+          ok: true,
+          installed: running.installed,
+          running: running.running,
+          wsState, // online = 反向 WS 已连（真·在线）；listening + running = 等待登录
+          selfId: config?.selfId ?? null,
+          autoBoot: config ? config.autoBoot !== false : false,
+          qr: { available: qr.available, mtimeMs: qr.mtimeMs ?? null, ageMs: qr.ageMs ?? null, stale: qr.stale ?? false },
+        })
+      }
+
+      if (req.method === 'POST' && url.pathname === '/qq/napcat/start') {
+        const config = await readQQConfig()
+        const r = await boot.start(config?.selfId)
+        if (r.error) return json(res, 400, { ok: false, error: r.error })
+        return json(res, 200, { ok: true, ...r })
+      }
+
+      if (req.method === 'POST' && url.pathname === '/qq/napcat/restart') {
+        const config = await readQQConfig()
+        const r = await boot.restart(config?.selfId)
+        if (r.error) return json(res, 400, { ok: false, error: r.error })
+        return json(res, 200, { ok: true, ...r })
+      }
+
+      if (req.method === 'GET' && url.pathname === '/qq/qrcode') {
+        const qr = boot.qrcode()
+        if (!qr.available) return json(res, 404, { ok: false, error: '二维码尚未生成（NapCat 未启动或已直接登录）' })
+        const png = await readFile(qr.file)
+        res.statusCode = 200
+        res.setHeader('content-type', 'image/png')
+        res.setHeader('cache-control', 'no-store')
+        return res.end(png)
+      }
+
+      if (req.method === 'POST' && url.pathname === '/qq/autoboot') {
+        const body = await readJsonBody(req)
+        if (typeof body?.enabled !== 'boolean') return json(res, 400, { ok: false, error: '需要 enabled 布尔字段' })
+        const config = (await readQQConfig()) ?? {}
+        if (!config.selfId) return json(res, 400, { ok: false, error: 'qq.json 缺少 selfId（先跑 scripts/qq-setup.mjs）' })
+        config.autoBoot = body.enabled
+        await writeQQConfig(config)
+        log(`NapCat 自动拉起：${body.enabled ? '开' : '关'}`)
+        return json(res, 200, { ok: true, enabled: body.enabled })
+      }
+
       json(res, 404, { ok: false, error: `未知路由 ${req.method} ${url.pathname}` })
     } catch (e) {
       json(res, 500, { ok: false, error: String(e?.message ?? e) })
@@ -317,7 +385,7 @@ export function startRouteServer({ port = 3939, getQQ, getAllQQ, getStatus, log 
   return new Promise((resolve) => {
     server.listen(port, '127.0.0.1', () => {
       const actual = server.address().port
-      log(`行动路由服务器已启动 http://127.0.0.1:${actual}（status | qq/send | personas | outbox | peers | settings-page）`)
+      log(`行动路由服务器已启动 http://127.0.0.1:${actual}（status | qq/send | personas | outbox | peers | napcat | settings-page）`)
       resolve({
         port: actual,
         stop: () => server.close(),
