@@ -4,7 +4,8 @@ import { normalizeOneBotMessage, extractMessageText, isAtMe, normalizeId } from 
 import { createQQApi } from '../src/platforms/qq/api.js'
 import { startQQReceiver } from '../src/platforms/qq/receiver.js'
 import { createQQSession } from '../src/platforms/qq/session.js'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { registerQQ } from '../src/platforms/qq/index.js'
+import { mkdtempSync, rmSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import WebSocket from 'ws'
@@ -350,5 +351,31 @@ test('mface：捕获元数据并按名查找', async () => {
     assert.equal(mfaceRefs[0], '开心柴犬')
   } finally {
     rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+// ---------- registerQQ 路径装配 ----------
+
+test('registerQQ 路径不翻倍：所有运行时文件直接落在鲸鱼 home 下', async () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'whale-home-'))
+  try {
+    const qq = await registerQQ({
+      whale: { id: 'lingxi', rhythm: { passive: {} }, socialBounds: {} },
+      home,
+      controller: { create: async () => {}, rename: async () => {} },
+      persona: { name: '泠汐' },
+      log: () => {},
+      config: { wsPort: 0, accessToken: 'sec', httpBase: 'http://127.0.0.1:1', selfId: 42 },
+    })
+    assert.ok(qq, '装配应成功')
+    assert.equal(qq.peersFile, path.join(home, 'qq-peers.json'))
+    assert.equal(qq.conversationManager.convFile, path.join(home, 'conversations.json'))
+    await qq.conversationManager.mfaceLibrary.capture(
+      [{ type: 'mface', data: { emoji_id: 'e1', summary: '[嘿嘿]' } }], '阿明')
+    assert.ok(existsSync(path.join(home, 'mface-library.json')), 'mface 库应落在 home 下')
+    assert.ok(!existsSync(path.join(home, 'lingxi')), '不得出现 home/<id> 翻倍目录')
+    qq.stop()
+  } finally {
+    rmSync(home, { recursive: true, force: true })
   }
 })

@@ -38,11 +38,12 @@ export async function registerQQ({ whale, home, controller, workspaceId, persona
   }
 
   const api = createQQApi({ config })
-  const peerStore = createPeerStore(path.join(home, whale.id, 'qq-peers.json'))
+  // home 已是 data/<whaleId>，不要再拼 whale.id（避免 data/<id>/<id>/ 翻倍）
+  const peerStore = createPeerStore(path.join(home, 'qq-peers.json'))
 
   const conversationManager = createConversationManager({
     controller,
-    whaleHome: path.join(home, whale.id),
+    whaleHome: home,
     workspaceId,
     persona,
     whale,
@@ -80,7 +81,7 @@ export async function registerQQ({ whale, home, controller, workspaceId, persona
     api,
     selfId: config.selfId ?? null,
     conversationManager,
-    peersFile: path.join(home, whale.id, 'qq-peers.json'),
+    peersFile: path.join(home, 'qq-peers.json'),
     stop: () => receiver.stop(),
     state: () => ({ receiver: lastState, why: lastWhy, port: receiver.port }),
   }
