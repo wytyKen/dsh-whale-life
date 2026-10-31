@@ -369,7 +369,14 @@ export function settingsPage() {
  * 返回 cleanup 函数；webServer 不可用时优雅降级（独立页面仍可用）并返回 no-op。
  */
 export function registerSettingsSection({ ctx, log = () => {}, port = DEFAULT_ROUTE_PORT } = {}) {
-  const webServer = ctx?.webServer ?? (typeof ctx?.get === 'function' ? ctx.get('webServer') : undefined)
+  // Cordis：访问未声明 inject 的服务属性会抛异常（而非返回 undefined），
+  // ?? 接不住异常——必须 try-catch，否则拖垮整个插件启动。
+  let webServer
+  try {
+    webServer = ctx?.webServer ?? (typeof ctx?.get === 'function' ? ctx.get('webServer') : undefined)
+  } catch {
+    webServer = undefined
+  }
   if (!webServer || typeof webServer.register !== 'function') {
     log('设置页区块未挂载：webServer 服务不可用 —— 用独立页面代替：' + `http://127.0.0.1:${port}/settings-page`)
     return () => {}
