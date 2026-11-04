@@ -1,0 +1,21 @@
+# 依赖与构建产物
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+
+# 调研期间下载的官方文档快照（本地参考用，不入库）
+.research/
+
+# 环境与密钥
+.env
+.env.*
+
+# 日志
+*.log
+logs/
+
+# 系统文件
+.DS_Store
+Thumbs.db
+Desktop.ini
